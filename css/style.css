@@ -8,7 +8,10 @@
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--bg); color: var(--w); }
-body { font-family: 'Pixelify Sans', ui-monospace, monospace; font-size: 17px; line-height: 1.35; -webkit-font-smoothing: none; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif; font-size: 16px; line-height: 1.4; }
+/* pixel display font for titles, labels and buttons; body text stays in the system font for readability */
+.panel h2, .hud .lv, .hero-name, .pair h1, .btn, .nav button, .lvlup .big, .sheet h3, .tabs button, .status-chip, .q-rew, .big-num, .tiny { font-family: 'Silkscreen', ui-monospace, monospace; font-weight: 400; }
+.num, .amt, .kv b { font-variant-numeric: tabular-nums; }
 button, input, select, textarea { font: inherit; color: inherit; }
 .px { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
 .ico { display: inline-block; vertical-align: -2px; }
@@ -23,7 +26,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .panel { background: var(--panel); margin: 14px 12px; padding: 14px; position: relative;
   box-shadow: 0 calc(-1 * var(--px)) 0 0 var(--k), 0 var(--px) 0 0 var(--k), calc(-1 * var(--px)) 0 0 0 var(--k), var(--px) 0 0 0 var(--k),
               inset 0 var(--px) 0 0 #3a4270, inset 0 calc(-1 * var(--px)) 0 0 #1f2338; }
-.panel h2 { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: var(--y); text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 8px; }
+.panel h2 { margin: 0 0 10px; font-size: 16px; color: var(--y); text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 8px; }
 .panel h2 .right { margin-left: auto; font-size: 13px; color: var(--g); text-transform: none; letter-spacing: 0; font-weight: 400; }
 .row { display: flex; align-items: center; gap: 10px; }
 .row.between { justify-content: space-between; }
@@ -74,7 +77,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .bubble::before { content: ''; position: absolute; top: -12px; left: 50%; margin-left: -4px; width: 8px; height: 8px; background: var(--w); box-shadow: 0 -4px 0 0 var(--k), -4px 0 0 0 var(--k), 4px 0 0 0 var(--k); }
 .status-chip { display: inline-block; padding: 2px 8px; font-size: 13px; background: var(--L); color: var(--k); margin-left: 6px; }
 .status-chip.tired { background: var(--y); } .status-chip.sick { background: var(--o); } .status-chip.ko { background: var(--r); color: var(--w); }
-.hero-name { font-size: 20px; font-weight: 700; margin-top: 10px; }
+.hero-name { font-size: 20px; margin-top: 10px; }
 
 /* quest */
 .quest { display: flex; gap: 10px; align-items: center; padding: 10px; background: var(--panel2); margin-top: 8px; }
@@ -158,5 +161,5 @@ label.f { display: block; font-size: 13px; color: var(--g); margin: 12px 0 4px; 
 .pair h1 { color: var(--y); font-size: 30px; margin: 18px 0 6px; letter-spacing: 2px; }
 .pair .hero { margin: 0 auto; }
 .empty { color: var(--g); font-size: 14px; padding: 8px 0; }
-.big-num { font-size: 28px; font-weight: 700; }
+.big-num { font-size: 26px; }
 .goal-car { background: #1f2338; padding: 12px; display: flex; justify-content: center; margin: 8px 0; }
