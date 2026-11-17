@@ -1,6 +1,6 @@
 // Network-first: selalu ambil versi terbaru kalau online, pakai cache kalau offline.
-const CACHE = 'lrpg-v5';
-const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/api.js', 'js/config.js', 'js/fin.js', 'js/game.js', 'js/sprites.js', 'js/hero.js', 'manifest.webmanifest', 'icons/icon-192.png'];
+const CACHE = 'lrpg-v6';
+const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/api.js', 'js/config.js', 'js/fin.js', 'js/game.js', 'js/sprites.js', 'js/lpc.js', 'js/lpc-data.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {

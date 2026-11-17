@@ -7,50 +7,7 @@ export const PAL = {
   b: '#29366f', B: '#3b5dc9', c: '#41a6f6', C: '#73eff7', p: '#5d275d',
 };
 
-import { composeHero, paintGrid, HERO_W, HERO_H } from './hero.js';
-
 const mirror = rows => rows.map(r => r + [...r].reverse().join(''));
-
-// ---------- hero 16x16 ----------
-const HERO = mirror([
-  '......kk',
-  '....kkhh',
-  '...khhhh',
-  '..khhhhh',
-  '..khhsss',
-  '..ksssss',
-  '..kseess',
-  '..ksssss',
-  '..kssssm',
-  '...kssss',
-  '....kkrr',
-  '..krrrrr',
-  '.ksrrrrr',
-  '.ksrrrrr',
-  '..kppppk',
-  '..kbbbbk',
-]);
-
-/** Warna hero berubah sesuai level & kondisi. */
-export function heroPalette(level, status) {
-  const p = { k: PAL.k, h: '#4a2f27', s: '#d39a6a', e: PAL.k, m: '#8a4b38', r: PAL.B, p: PAL.d, b: PAL.k };
-  if (level >= 20) p.r = '#c99a2e';
-  else if (level >= 10) p.r = PAL.r;
-  else if (level >= 5) p.r = PAL.t;
-  if (status === 'sick' || status === 'ko') { p.s = '#a9b98a'; p.m = '#566c4a'; }
-  return p;
-}
-
-/** Aksesori di atas sprite dasar (headband, jubah, mahkota) dan efek kondisi. */
-function heroExtras(level, status, frame) {
-  const px = [];
-  if (level >= 5) for (let x = 3; x <= 12; x++) px.push([x, 3, level >= 15 ? PAL.y : PAL.r]);
-  if (level >= 10) [[1, 11], [1, 12], [1, 13], [1, 14], [14, 11], [14, 12], [14, 13], [14, 14]].forEach(([x, y]) => px.push([x, y, PAL.p]));
-  if (level >= 15) [[5, 0], [7, 0], [8, 0], [10, 0], [5, 1], [6, 1], [7, 1], [8, 1], [9, 1], [10, 1]].forEach(([x, y]) => px.push([x, y, PAL.y]));
-  if (status === 'tired') px.push([14, 4 + frame, PAL.c], [14, 5 + frame, PAL.C]);
-  if (status === 'sick') { px.push([3, 5, PAL.w], [4, 5, PAL.w], [5, 5, PAL.w]); px.push([13, 2 - frame, PAL.l], [14, 1 - frame, PAL.l]); }
-  return px;
-}
 
 // ---------- monster 16x16 ----------
 const SLIME = mirror([
@@ -132,38 +89,6 @@ function canvas(w, h, scale, cls) {
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
   return [c, ctx];
-}
-
-/** Gambar hero ke context (dipakai juga untuk ikon app). */
-export function paintHero(ctx, level, status, frame, s, ox = 0, oy = 0) {
-  const pal = heroPalette(level, status);
-  if (status === 'ko') {
-    // pingsan: rebah ke samping
-    ctx.save(); ctx.translate(ox + 16 * s, oy + 6 * s); ctx.rotate(Math.PI / 2);
-    drawRows(ctx, HERO, pal, 0, 0, s);
-    ctx.restore();
-    [[2, 2], [5, 1], [8, 2]].forEach(([x, y], i) => { ctx.fillStyle = i === 1 ? PAL.y : PAL.w; ctx.fillRect(ox + x * s, oy + (y + (frame ? 1 : 0)) * s, s, s); });
-    return;
-  }
-  const bob = frame ? 1 : 0;
-  drawRows(ctx, HERO, pal, ox, oy + bob * s, s, 0, 14);
-  drawRows(ctx, HERO, pal, ox, oy, s, 14, 16);
-  heroExtras(level, status, frame).forEach(([x, y, col]) => { ctx.fillStyle = col; ctx.fillRect(ox + x * s, oy + (y + (y < 14 ? bob : 0)) * s, s, s); });
-}
-
-/** Animated hero (2-frame idle) from a look object. */
-export function heroCanvas(look, status, scale = 4) {
-  const [c, ctx] = canvas(HERO_W, HERO_H, scale, 'hero');
-  let f = 0;
-  const grid = composeHero(look, status);
-  const draw = () => {
-    ctx.clearRect(0, 0, c.width, c.height);
-    if (status === 'ko') { ctx.save(); ctx.translate(c.width / 2, c.height / 2); ctx.rotate(Math.PI / 2); ctx.translate(-c.width / 2, -c.height / 2); paintGrid(ctx, grid, scale, 0, 0, 0); ctx.restore(); return; }
-    paintGrid(ctx, grid, scale, 0, 0, f);
-  };
-  draw();
-  c._timer = setInterval(() => { if (!c.isConnected) return clearInterval(c._timer); f ^= 1; draw(); }, status === 'ko' ? 900 : 600);
-  return c;
 }
 
 export function bossCanvas(idx, scale = 5, defeated = false) {

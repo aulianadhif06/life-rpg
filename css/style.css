@@ -70,10 +70,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .scene .stage { position: relative; height: 236px; margin: 0 -14px; background:
   linear-gradient(var(--b) 0 70%, var(--L) 70% 74%, #257a4a 74% 100%); overflow: hidden; }
 .scene .stage::before { content: ''; position: absolute; left: 0; right: 0; bottom: 26%; height: 4px; background: var(--l); }
-.scene .stage .hero { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); }
+.scene .stage .hero { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); }
 .scene .stage .edit { position: absolute; right: 12px; top: 12px; font-size: 12px; }
-.wardrobe-prev { display: flex; justify-content: center; background: linear-gradient(var(--b) 0 78%, var(--L) 78%); padding: 14px 0 6px; margin: 0 -16px 10px; position: sticky; top: -16px; z-index: 2; }
-.wsec { margin: 14px 0; } .wsec .tiny { margin-bottom: 6px; }
+.wardrobe-prev { display: flex; justify-content: center; background: linear-gradient(var(--b) 0 80%, #2d6e45 80%); padding: 10px 0 0; margin: -16px -16px 12px; position: sticky; top: -16px; z-index: 2; border-bottom: 4px solid var(--k); }
+.wsec { margin: 16px 0; } .wlab { font-size: 13px; color: var(--g); margin-bottom: 6px; }
 .chips button.locked { opacity: .55; } .lock { font-size: 11px; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .swatches button { width: 30px; height: 30px; border: 0; cursor: pointer; box-shadow: 0 0 0 2px var(--k); }
