@@ -1,6 +1,6 @@
 // Mesin game. Semua angka dihitung ulang dari data (transaksi, budget, jurnal), jadi tidak ada
 // state yang bisa "nyasar": edit transaksi lama → HP/XP ikut menyesuaikan.
-import { isFree, addDays, daysBetween, cycleOf, cycleEnd, addMonthKey } from './fin.js';
+import { isFree, catLabel, addDays, daysBetween, cycleOf, cycleEnd, addMonthKey } from './fin.js';
 import { BOSSES } from './sprites.js';
 
 export const RULES = {
@@ -17,16 +17,16 @@ export const RULES = {
 };
 
 export const QUESTS = {
-  jatah: { name: 'Jaga jatah', desc: 'Belanja bebas hari ini ≤ jatah aman', xp: 20, gold: 10, icon: 'sword', eod: true },
-  nospend: { name: 'Hari tanpa jajan', desc: 'Nol belanja bebas hari ini', xp: 30, gold: 15, icon: 'shield', eod: true },
-  food: { name: 'Makan hemat', desc: 'Makan & minum ≤ Rp50rb', xp: 20, gold: 10, icon: 'heart', eod: true },
-  noonline: { name: 'Tahan checkout', desc: 'Tidak belanja online', xp: 15, gold: 5, icon: 'chest', eod: true },
-  log2: { name: 'Juru catat', desc: 'Catat ≥ 2 transaksi (atau check-in)', xp: 15, gold: 5, icon: 'star' },
-  save: { name: 'Isi celengan', desc: 'Pindahkan uang ke tabungan/investasi', xp: 25, gold: 15, icon: 'coin' },
+  jatah: { name: 'Stay in budget', desc: 'Spend no more than today\'s safe limit', xp: 20, gold: 10, icon: 'sword', eod: true },
+  nospend: { name: 'No-spend day', desc: 'Zero flexible spending today', xp: 30, gold: 15, icon: 'shield', eod: true },
+  food: { name: 'Lean eats', desc: 'Food & drinks ≤ Rp50K', xp: 20, gold: 10, icon: 'heart', eod: true },
+  noonline: { name: 'Hold the cart', desc: 'No online shopping', xp: 15, gold: 5, icon: 'chest', eod: true },
+  log2: { name: 'Bookkeeper', desc: 'Log 2+ transactions (or check in)', xp: 15, gold: 5, icon: 'star' },
+  save: { name: 'Feed the piggy bank', desc: 'Move money into savings or investments', xp: 25, gold: 15, icon: 'coin' },
 };
 const QUEST_POOL = Object.keys(QUESTS);
 
-export const TITLES = [[1, 'Pemula'], [3, 'Pencatat'], [5, 'Petualang'], [8, 'Penjaga Dompet'], [10, 'Ksatria Hemat'], [15, 'Penjaga Harta'], [20, 'Juragan'], [30, 'Sultan']];
+export const TITLES = [[1, 'Rookie'], [3, 'Bookkeeper'], [5, 'Adventurer'], [8, 'Wallet Warden'], [10, 'Frugal Knight'], [15, 'Treasure Keeper'], [20, 'Tycoon'], [30, 'Legend']];
 export const xpNeed = lvl => 80 + 40 * lvl;
 export const titleOf = lvl => TITLES.filter(t => lvl >= t[0]).pop()[1];
 
@@ -97,7 +97,7 @@ export function compute(data, game, today) {
     S.xp += xp; S.gold += gold;
     const before = S.hp;
     S.hp = Math.max(0, Math.min(RULES.hpMax, S.hp + hp));
-    if (S.hp === 0 && before > 0) { S.ko = true; S.koGood = 0; S.events.push({ date, text: 'Pingsan! Butuh ' + RULES.reviveDays + ' hari bagus berturut-turut untuk bangun.', kind: 'ko' }); }
+    if (S.hp === 0 && before > 0) { S.ko = true; S.koGood = 0; S.events.push({ date, text: 'Knocked out! ' + RULES.reviveDays + ' good days in a row to get back up.', kind: 'ko' }); }
     if (xp || gold || hp) S.events.push({ date, text, xp, gold, hp: S.hp - before, kind });
   };
 
@@ -122,22 +122,22 @@ export function compute(data, game, today) {
     const b = c.budget;
     const freeOk = !b || c.free <= b.free;
     const name = BOSSES[bossIndex(c.key)].name;
-    if (c.hits >= c.maxHits && freeOk) { c.result = 'win'; gain(date, name + ' dikalahkan! Siklus ditutup di bawah budget.', RULES.boss.xp, RULES.boss.gold, 0, 'boss'); }
-    else { c.result = 'lose'; gain(date, name + ' kabur. ' + (freeOk ? 'Serangan kurang (' + c.hits + '/' + c.maxHits + ').' : 'Budget bebas tembus.'), 0, 0, RULES.boss.escapeHp, 'boss'); }
+    if (c.hits >= c.maxHits && freeOk) { c.result = 'win'; gain(date, name + ' defeated! Cycle closed under budget.', RULES.boss.xp, RULES.boss.gold, 0, 'boss'); }
+    else { c.result = 'lose'; gain(date, name + ' escaped. ' + (freeOk ? 'Not enough hits (' + c.hits + '/' + c.maxHits + ').' : 'Flexible budget was exceeded.'), 0, 0, RULES.boss.escapeHp, 'boss'); }
     challenges.filter(ch => ch.data.cycle === c.key).forEach(ch => {
       const used = c.used[ch.data.cat] || 0, lim = ch.data.limit;
       if (used <= lim) {
         const saved = Math.max(0, (b && b.lines[ch.data.cat] != null ? b.lines[ch.data.cat] : lim) - used);
         const fund = Math.round(saved * share / 1000) * 1000;
         S.fund += fund;
-        gain(date, 'Tantangan ' + ch.data.cat + ' ≤ ' + Math.round(lim / 1000) + 'rb berhasil! Dana hadiah +' + fund.toLocaleString('id-ID'), RULES.challenge.xp, RULES.challenge.gold, 0, 'challenge');
-      } else S.events.push({ date, text: 'Tantangan ' + ch.data.cat + ' gagal (terpakai ' + used.toLocaleString('id-ID') + ').', kind: 'challenge' });
+        gain(date, 'Challenge won: ' + catLabel(ch.data.cat) + ' ≤ ' + Math.round(lim / 1000) + 'K. Reward fund +Rp' + fund.toLocaleString('id-ID'), RULES.challenge.xp, RULES.challenge.gold, 0, 'challenge');
+      } else S.events.push({ date, text: 'Challenge missed: ' + catLabel(ch.data.cat) + ' (spent Rp' + used.toLocaleString('id-ID') + ').', kind: 'challenge' });
     });
   };
 
   // Prolog: hari-hari yang sudah tercatat sebelum game dimulai jadi XP awal (tanpa efek HP).
   const pro = Object.keys(days).filter(d => d < start && (days[d].n > 0 || days[d].checkin)).length;
-  if (pro) gain(addDays(start, -1), 'Prolog: ' + pro + ' hari tercatat sebelum petualangan dimulai.', pro * 5, pro * 2, 0, 'prologue');
+  if (pro) gain(addDays(start, -1), 'Prologue: ' + pro + ' days logged before the adventure began.', pro * 5, pro * 2, 0, 'prologue');
 
   let prevKey = null;
   for (let d = start; d <= today; d = addDays(d, 1)) {
@@ -154,27 +154,27 @@ export function compute(data, game, today) {
       Object.entries(day.cats).forEach(([cat, v]) => {
         c.used[cat] = (c.used[cat] || 0) + v;
         const lim = c.budget && c.budget.lines[cat];
-        if (lim != null && lim > 0 && !c.overHit[cat] && c.used[cat] > lim) { c.overHit[cat] = d; gain(d, cat + ' tembus budget! Monster menyerang.', 0, 0, RULES.over.hp, 'over'); }
+        if (lim != null && lim > 0 && !c.overHit[cat] && c.used[cat] > lim) { c.overHit[cat] = d; gain(d, catLabel(cat) + ' went over budget. The boss strikes!', 0, 0, RULES.over.hp, 'over'); }
       });
     }
     const under = allowance == null || (day ? day.free : 0) <= allowance + 500;
 
-    if (logged) gain(d, 'Catatan hari ini', RULES.log.xp, RULES.log.gold, 0, 'log');
+    if (logged) gain(d, 'Logged the day', RULES.log.xp, RULES.log.gold, 0, 'log');
     // quest yang tidak bisa batal dibayar langsung; sisanya di akhir hari
     questsFor(d).forEach(q => {
       const Q = QUESTS[q];
-      if ((closed || !Q.eod) && questDone(q, day, allowance)) gain(d, 'Quest: ' + Q.name, Q.xp, Q.gold, 0, 'quest');
+      if ((closed || !Q.eod) && questDone(q, day, allowance)) gain(d, 'Quest complete: ' + Q.name, Q.xp, Q.gold, 0, 'quest');
     });
     if (!closed) continue;
 
-    if (!logged) { gain(d, 'Lupa nyatet. Monster mencuri HP.', 0, 0, RULES.missed.hp, 'miss'); S.streak = 0; S.koGood = 0; continue; }
+    if (!logged) { gain(d, 'Missed a day of logging. HP stolen.', 0, 0, RULES.missed.hp, 'miss'); S.streak = 0; S.koGood = 0; continue; }
     S.streak++; S.best = Math.max(S.best, S.streak);
-    if (S.streak % RULES.streak.every === 0) gain(d, 'Streak ' + S.streak + ' hari!', RULES.streak.xp, RULES.streak.gold, 0, 'streak');
+    if (S.streak % RULES.streak.every === 0) gain(d, S.streak + '-day streak!', RULES.streak.xp, RULES.streak.gold, 0, 'streak');
     if (under) {
       c.hits += 1 + (day.free === 0 ? 1 : 0);
-      gain(d, day.free === 0 ? 'Critical hit! Hari tanpa jajan.' : 'Serangan ke boss: belanja di bawah jatah.', RULES.pace.xp, RULES.pace.gold, RULES.pace.hp, 'hit');
-      if (S.ko && ++S.koGood >= RULES.reviveDays) { S.ko = false; S.hp = RULES.reviveHp; S.events.push({ date: d, text: 'Bangkit lagi! HP ' + RULES.reviveHp + '.', kind: 'revive' }); }
-    } else { gain(d, 'Belanja lewat jatah harian.', 0, 0, RULES.offPace.hp, 'offpace'); S.koGood = 0; }
+      gain(d, day.free === 0 ? 'Critical hit! A no-spend day.' : 'Hit the boss: spent within the safe limit.', RULES.pace.xp, RULES.pace.gold, RULES.pace.hp, 'hit');
+      if (S.ko && ++S.koGood >= RULES.reviveDays) { S.ko = false; S.hp = RULES.reviveHp; S.events.push({ date: d, text: 'Back on your feet! HP ' + RULES.reviveHp + '.', kind: 'revive' }); }
+    } else { gain(d, 'Spent over the daily safe limit.', 0, 0, RULES.offPace.hp, 'offpace'); S.koGood = 0; }
   }
 
   // level dari total XP

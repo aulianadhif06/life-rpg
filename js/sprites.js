@@ -71,12 +71,12 @@ const BEAST = mirror([
 ]);
 
 export const BOSSES = [
-  { name: 'Slime Jajan', shape: SLIME, c: PAL.l, d: PAL.L },
-  { name: 'Hantu Promo', shape: GHOST, c: PAL.g, d: PAL.G },
-  { name: 'Naga Checkout', shape: BEAST, c: PAL.o, d: PAL.r },
-  { name: 'Slime Paylater', shape: SLIME, c: PAL.c, d: PAL.B, crown: true },
-  { name: 'Iblis Diskon', shape: BEAST, c: '#8b5fbf', d: PAL.p },
-  { name: 'Hantu Ongkir', shape: GHOST, c: PAL.y, d: PAL.o },
+  { name: 'Snack Slime', shape: SLIME, c: PAL.l, d: PAL.L },
+  { name: 'Promo Ghost', shape: GHOST, c: PAL.g, d: PAL.G },
+  { name: 'Checkout Dragon', shape: BEAST, c: PAL.o, d: PAL.r },
+  { name: 'King Paylater', shape: SLIME, c: PAL.c, d: PAL.B, crown: true },
+  { name: 'Discount Demon', shape: BEAST, c: '#8b5fbf', d: PAL.p },
+  { name: 'Shipping-Fee Ghost', shape: GHOST, c: PAL.y, d: PAL.o },
 ];
 
 // ---------- mobil 24x10 (sedan generik) ----------

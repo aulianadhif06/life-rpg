@@ -3,7 +3,16 @@
 export const FIXED_CATS = ['Tempat tinggal', 'Tagihan & pulsa', 'Biaya & bunga bank'];
 export const EXP_CATS = ['Makan & minum', 'Tempat tinggal', 'Transport', 'Tagihan & pulsa', 'Belanja harian', 'Belanja online', 'Hiburan & nongkrong', 'Kesehatan', 'Keluarga & sosial', 'Biaya & bunga bank', 'Mobil – BBM', 'Mobil – servis & part', 'Mobil – pajak & admin', 'Mobil – modif', 'Lainnya'];
 export const INC_CATS = ['Gaji', 'THR & bonus', 'Sampingan', 'Cashback & refund', 'Hasil investasi', 'Lainnya'];
-export const KIND_LABEL = { harian: 'Dompet harian', tabungan: 'Tabungan', investasi: 'Investasi', kredit: 'Kartu kredit' };
+export const KIND_LABEL = { harian: 'Everyday', tabungan: 'Savings', investasi: 'Investments', kredit: 'Credit cards' };
+/** Category names are stored in Indonesian in the sheet; these are display labels only. */
+export const CAT_EN = {
+  'Makan & minum': 'Food & drinks', 'Tempat tinggal': 'Housing', 'Transport': 'Transport', 'Tagihan & pulsa': 'Bills & phone',
+  'Belanja harian': 'Groceries & daily', 'Belanja online': 'Online shopping', 'Hiburan & nongkrong': 'Fun & hangouts', 'Kesehatan': 'Health',
+  'Keluarga & sosial': 'Family & social', 'Biaya & bunga bank': 'Bank fees', 'Mobil – BBM': 'Car – fuel', 'Mobil – servis & part': 'Car – service & parts',
+  'Mobil – pajak & admin': 'Car – tax & admin', 'Mobil – modif': 'Car – mods', 'Lainnya': 'Other', 'Gaji': 'Salary', 'THR & bonus': 'Bonus',
+  'Sampingan': 'Side income', 'Cashback & refund': 'Cashback & refund', 'Hasil investasi': 'Investment return', 'Hadiah': 'Reward', 'Pindah dana': 'Transfer',
+};
+export const catLabel = c => CAT_EN[c] || c;
 
 export const isLiving = c => !/^(Mobil|Hadiah)/.test(String(c || ''));
 export const isFixed = c => FIXED_CATS.includes(c);
@@ -21,9 +30,9 @@ export function todayLocal() {
 }
 export const addMonthKey = (k, n) => { let [y, m] = k.split('-').map(Number); m += n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return y + '-' + String(m).padStart(2, '0'); };
 
-export const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-export const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
-export const DAYS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+export const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export const shortDate = s => Number(s.slice(8)) + ' ' + MON[Number(s.slice(5, 7)) - 1];
 export const cycleName = k => MONTHS[Number(k.slice(5, 7)) - 1] + ' ' + k.slice(0, 4);
 
@@ -32,17 +41,17 @@ const nf = new Intl.NumberFormat('id-ID');
 export const rp = n => (n < 0 ? '-' : '') + 'Rp' + nf.format(Math.round(Math.abs(n || 0)));
 export function rpShort(n) {
   const a = Math.abs(n || 0), s = n < 0 ? '-' : '';
-  if (a >= 1e9) return s + (a / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace('.', ',') + 'M';
-  if (a >= 1e6) return s + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace('.', ',').replace(',0', '') + 'jt';
-  if (a >= 1e3) return s + Math.round(a / 1e3) + 'rb';
+  if (a >= 1e9) return s + (a / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace('.0', '') + 'B';
+  if (a >= 1e6) return s + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace('.0', '') + 'M';
+  if (a >= 1e3) return s + Math.round(a / 1e3) + 'K';
   return s + Math.round(a);
 }
-/** "25rb", "1,5jt", "250.000", "250000" → angka. */
+/** "25k", "25rb", "1.5m", "1,5jt", "250.000", "250000" → number. */
 export function parseAmount(v) {
   let s = String(v || '').toLowerCase().replace(/rp/g, '').replace(/\s/g, '');
   if (!s) return NaN;
   let mul = 1;
-  if (/(jt|juta)$/.test(s)) { mul = 1e6; s = s.replace(/(jt|juta)$/, ''); }
+  if (/(jt|juta|mio|m)$/.test(s)) { mul = 1e6; s = s.replace(/(jt|juta|mio|m)$/, ''); }
   else if (/(rb|ribu|k)$/.test(s)) { mul = 1e3; s = s.replace(/(rb|ribu|k)$/, ''); }
   if (mul > 1) s = s.replace(',', '.');
   else s = s.replace(/[.,](?=\d{3}(\D|$))/g, '').replace(',', '.');

@@ -17,16 +17,16 @@ function remember(d) {
 
 /** Panggil aksi backend. Semua aksi tulis mengembalikan data terbaru. */
 export async function api(action, ...args) {
-  if (!API_URL) throw new Error('URL API belum diisi di js/config.js.');
+  if (!API_URL) throw new Error('The app is not configured yet.');
   const key = auth.key;
-  if (!key) throw new Error('Belum terhubung.');
+  if (!key) throw new Error('Not signed in.');
   let res;
   try {
     res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ key, action, args }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
-  } catch (e) { throw new Error('Tidak bisa menghubungi server. Cek koneksi.'); }
+  } catch (e) { throw new Error('Can\'t reach the server. Check your connection.'); }
   let j;
-  try { j = await res.json(); } catch (e) { throw new Error('Balasan server tidak terbaca (' + res.status + ').'); }
-  if (!j.ok) { const err = new Error(j.error || 'Gagal.'); err.auth = /kunci/i.test(j.error || ''); throw err; }
+  try { j = await res.json(); } catch (e) { throw new Error('Unexpected server response (' + res.status + ').'); }
+  if (!j.ok) { const err = new Error(j.error || 'Something went wrong.'); err.auth = /kunci/i.test(j.error || ''); throw err; }
   if (j.data && j.data.txns && j.data.cycle) remember(j.data);
   return j.data;
 }
