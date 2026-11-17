@@ -2,7 +2,7 @@
 // state yang bisa "nyasar": edit transaksi lama → HP/XP ikut menyesuaikan.
 import { isFree, catLabel, addDays, daysBetween, cycleOf, cycleEnd, addMonthKey } from './fin.js';
 import { BOSSES } from './sprites.js';
-import { sessionsOn, prsIn, wdOf, isSport, targets, weightAvg } from './train.js';
+import { sessionsOn, prsIn, wdOf, isSport, kindOf, targets, weightAvg } from './train.js';
 
 export const RULES = {
   hpMax: 100,
@@ -183,8 +183,8 @@ export function compute(data, game, today) {
     {
       if (train && !restDays.has(d)) sessionsOn(train, d).forEach(sess => { pending.push({ date: d, name: sess.name, type: sess.type }); wk.sched++; });
       (wByDay[d] || []).forEach(w => {
-        const kind = isSport(w) ? 'sport' : 'gym';
-        const pi = pending.findIndex(x => (x.type || 'gym') === kind);
+        const kind = kindOf(w);
+        const pi = pending.findIndex(x => kind === 'any' || (x.type || 'gym') === kind);
         const p = pi >= 0 ? pending.splice(pi, 1)[0] : null;
         const name = w.data.name || (p && p.name) || 'Workout';
         gain(d, (p ? 'Workout done: ' : 'Bonus workout: ') + name, RULES.gym.xp, RULES.gym.gold, S.ko ? 0 : RULES.gym.hp, 'gym');

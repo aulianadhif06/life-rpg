@@ -3,7 +3,7 @@ import { CONNECT_URL } from './config.js';
 import { lockOn, lockState, lockSupported, enableLock, unlock, disableLock, wipeLock, relock, RELOCK_MS } from './lock.js';
 import { compute, RULES } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
-import { EX, WEEKDAYS, SPLIT_TXT, SPORTS, EFFORT, FOODS, ACTIVITY, GOALS, sportKcal, isSport, targets, weightAvg, latestWeight, sessionsOn, schedIds, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
+import { kindOf, EX, WEEKDAYS, SPLIT_TXT, SPORTS, EFFORT, FOODS, ACTIVITY, GOALS, sportKcal, isSport, targets, weightAvg, latestWeight, sessionsOn, schedIds, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
 import { avatarCanvas, avatarOf, DEFAULT_AVATAR, HAIRS, TOPS, BOTTOMS, SKIN_TONES, HAIR_COLORS, swatch } from './hero.js';
 import {
   EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
@@ -272,8 +272,8 @@ function viewHome() {
   const tr = trainCfg();
   let gymP = null;
   if (tr && tr.plan) {
-    const doneK = workouts().filter(w => w.date === t.date).map(w => isSport(w) ? 'sport' : 'gym');
-    const todo = (restOn(t.date) ? [] : sessionsOn(tr, t.date)).filter(x => { const k = doneK.indexOf(x.type); if (k >= 0) { doneK.splice(k, 1); return false; } return true; });
+    const doneK = workouts().filter(w => w.date === t.date).map(kindOf);
+    const todo = (restOn(t.date) ? [] : sessionsOn(tr, t.date)).filter(x => { let k = doneK.indexOf(x.type); if (k < 0) k = doneK.indexOf('any'); if (k >= 0) { doneK.splice(k, 1); return false; } return true; });
     const late = (g.gym.pending || []).filter(p => p.date < t.date);
     if (late.length) gymP = panel('Training', 'make-up day', h('p.small', null, 'You missed ' + late.map(x => x.name).join(', ') + '. Do it today or lose ' + (-RULES.gym.missed) + ' HP at midnight.'), h('div.btns', null, h('button.btn.gold', { onclick: () => { S.hTab = 'train'; go('train'); } }, 'Go to training')));
     else if (todo.length) gymP = panel('Training', 'today', todo.map(x => h('div.row', { style: 'margin-bottom:8px' }, iconCanvas(x.type === 'sport' ? 'bolt' : 'dumbbell', 3), h('div.grow', null, h('div.t1', null, x.name), h('div.small.muted', null, '+' + RULES.gym.xp + ' XP when you finish.')),
@@ -765,8 +765,8 @@ function viewTrain() {
   const ws = workouts(), draft = loadDraft();
   const sessions = restOn(t) ? [] : sessionsOn(tr, t), doneToday = ws.filter(w => w.date === t);
   const makeup = (g.gym.pending || []).filter(p => p.date < t);
-  const doneKinds = doneToday.map(w => isSport(w) ? 'sport' : 'gym');
-  const todo = sessions.filter(s => { const i = doneKinds.indexOf(s.type); if (i >= 0) { doneKinds.splice(i, 1); return false; } return true; });
+  const doneKinds = doneToday.map(kindOf);
+  const todo = sessions.filter(s => { let i = doneKinds.indexOf(s.type); if (i < 0) i = doneKinds.indexOf('any'); if (i >= 0) { doneKinds.splice(i, 1); return false; } return true; });
   const startFor = s => s.type === 'sport'
     ? h('button.btn.gold', { onclick: () => openActivity({ sport: s.sport, min: s.min, name: s.name }) }, 'Log ' + s.name)
     : h('button.btn.gold', { onclick: () => openWorkout({ dayId: s.id }) }, 'Start ' + s.name);
@@ -1315,6 +1315,14 @@ function openWorkout(opt) {
 function openWorkoutDetail(w) {
   modal(w.data.name, close => h('div', null,
     h('div.small.muted', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + ' · ' + wDesc(w) + (isSport(w) ? '' : ' · ' + Math.round(volume(w)).toLocaleString('en-US') + ' kg')),
+    w.data.src === 'garmin' ? h('div.wsec', null, h('div.wlab', null, 'What was this session?'),
+      h('div.chips', null, [['gym', 'Gym'], ['padel', 'Padel'], ['basketball', 'Basketball'], ['football', 'Football'], ['futsal', 'Futsal'], ['run', 'Run'], ['hiit', 'HIIT / cardio'], ['other', 'Other']].map(([k, l]) => {
+        const on = k === 'gym' ? w.data.as === 'gym' : w.data.as === 'sport' && w.data.sport === k;
+        return h('button' + (on ? '.on' : ''), { type: 'button', onclick: async () => {
+          const data = { ...w.data, as: k === 'gym' ? 'gym' : 'sport', sport: k === 'gym' ? w.data.sport : k, name: k === 'gym' ? 'Gym (Garmin)' : SPORTS[k].name };
+          if (await act(() => api('logUpdate', { id: w.id, date: w.date, kind: 'workout', data }), 'Saved as ' + l)) close();
+        } }, l);
+      })), h('p.small.muted', null, 'Your watch recorded this as ' + (w.data.gtype || 'an activity').replace(/_/g, ' ') + '. Until you pick, an untagged HIIT session counts for whatever was scheduled that day.')) : null,
     isSport(w) ? h('div.list', null,
       h('div.item', null, h('div.grow', null, h('div.t1', null, sportName(w.data.sport)), h('div.t2', null, [w.data.effort ? 'Effort: ' + w.data.effort : '', w.data.hr ? 'Avg HR ' + w.data.hr : '', w.data.note || ''].filter(Boolean).join(' · ')))))
       : h('div.list', null, (w.data.ex || []).map(x => h('div.item', null, h('div.grow', null, h('div.t1', null, x.n), h('div.t2', null, setsTxt(x.s)))))),

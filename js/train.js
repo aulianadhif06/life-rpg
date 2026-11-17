@@ -197,7 +197,10 @@ export const sportKcal = (sport, min, kg, effort) => {
   const s = SPORTS[sport] || SPORTS.other, f = (EFFORT.find(e => e[0] === effort) || EFFORT[1])[2];
   return Math.round(s.met * f * (kg || 70) * (min || 0) / 60);
 };
-export const isSport = w => w && w.data && w.data.type === 'sport';
+export const isSport = w => w && w.data && w.data.type === 'sport' && w.data.as !== 'gym';
+/** 'gym' | 'sport' | 'any'. An untagged Garmin HIIT session can be gym or a sport, so it fills whichever session is due. */
+export const kindOf = w => !w || !w.data ? 'gym' : w.data.as === 'gym' ? 'gym' : w.data.type !== 'sport' ? 'gym'
+  : (w.data.src === 'garmin' && w.data.gtype === 'hiit' && !w.data.as) ? 'any' : 'sport';
 
 // ---------- nutrition targets ----------
 // Mifflin-St Jeor BMR × activity factor, plus a small surplus for lean gain; protein 1.8 g per kg.
