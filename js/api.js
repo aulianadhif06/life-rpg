@@ -1,21 +1,42 @@
 import { API_URL } from './config.js';
+import { lockState, lockKeys, sealJSON } from './lock.js';
 
-const KEY = 'lrpg.key', CACHE = 'lrpg.cache';
+const KEY = 'lrpg.key', CACHE = 'lrpg.cache', CACHE_ENC = 'lrpg.cache.enc';
+let memKey = '', memCache = null;
 
+// When the Face ID lock encrypts storage, the key and the data copy only exist in memory after unlocking.
 export const auth = {
-  get key() { try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; } },
-  set(k) { try { localStorage.setItem(KEY, k); } catch (e) { /* storage tidak tersedia */ } },
-  clear() { try { localStorage.removeItem(KEY); localStorage.removeItem(CACHE); } catch (e) { /* abaikan */ } },
+  get key() {
+    if (memKey) return memKey;
+    if (lockState().enc) return '';
+    try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; }
+  },
+  set(k) {
+    memKey = k;
+    if (lockState().enc) { sealJSON('lrpg.key.enc', k); return; }
+    try { localStorage.setItem(KEY, k); } catch (e) { /* storage unavailable */ }
+  },
+  /** Load key + cache decrypted by the lock (called right after a successful unlock). */
+  unlocked(k, cache) { memKey = k || ''; memCache = cache || null; },
+  forget() { memKey = ''; memCache = null; },
+  clear() {
+    memKey = ''; memCache = null;
+    try { [KEY, CACHE, CACHE_ENC, 'lrpg.key.enc'].forEach(x => localStorage.removeItem(x)); } catch (e) { /* ignore */ }
+  },
 };
 
 export function cached() {
+  if (memCache) return memCache;
+  if (lockState().enc) return null;
   try { return JSON.parse(localStorage.getItem(CACHE) || 'null'); } catch (e) { return null; }
 }
 function remember(d) {
-  try { localStorage.setItem(CACHE, JSON.stringify(d)); } catch (e) { /* penuh: lewati */ }
+  memCache = d;
+  if (lockState().enc) { if (lockKeys()) sealJSON(CACHE_ENC, d); return; }
+  try { localStorage.setItem(CACHE, JSON.stringify(d)); } catch (e) { /* full: skip */ }
 }
 
-/** Panggil aksi backend. Semua aksi tulis mengembalikan data terbaru. */
+/** Call a backend action. Every write action returns the latest data. */
 export async function api(action, ...args) {
   if (!API_URL) throw new Error('The app is not configured yet.');
   const key = auth.key;

@@ -1,5 +1,6 @@
 import { api, auth, cached } from './api.js';
 import { CONNECT_URL } from './config.js';
+import { lockOn, lockState, lockSupported, enableLock, unlock, disableLock, wipeLock, relock, RELOCK_MS } from './lock.js';
 import { compute, RULES } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
 import { EX, WEEKDAYS, SPLIT_TXT, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
@@ -41,7 +42,7 @@ function floatText(text, color, i = 0) {
 }
 
 // ---------- state ----------
-const S = { data: null, g: null, view: 'home', calMonth: null, calSel: null, busy: false, txSel: null };
+const S = { locked: false, data: null, g: null, view: 'home', calMonth: null, calSel: null, busy: false, txSel: null };
 const VIEWS = [['home', 'Home', 'sword'], ['jurnal', 'Journal', 'star'], ['add', '', ''], ['train', 'Train', 'dumbbell'], ['arena', 'Budget', 'shield'], ['harta', 'Vault', 'chest']];
 const LAST = 'lrpg.last';
 
@@ -96,12 +97,46 @@ async function saveGame(patch) {
 // ---------- boot ----------
 async function boot() {
   const m = location.hash.match(/[#&]k=([a-f0-9]{20,})/i);
-  if (m) { auth.set(m[1]); history.replaceState(null, '', location.pathname); }
+  if (m) history.replaceState(null, '', location.pathname);
+  const pending = m ? m[1] : null;
+  if (lockOn()) return renderLock(pending);
+  if (pending) auth.set(pending);
+  start();
+}
+async function start() {
+  S.locked = false;
   if (!auth.key) return renderPair();
   const c = cached();
   if (c) { S.data = c; recompute(false); render(); }
   else document.body.replaceChildren(h('div.pair', null, avatarCanvas(DEFAULT_AVATAR, 'ok', 3), h('h1', null, 'LIFE RPG'), h('p.muted', null, 'Loading your world…')));
   await refresh(!!c);
+}
+function renderLock(pending) {
+  S.locked = true;
+  document.querySelectorAll('.ov').forEach(o => o.remove());
+  const err = h('div.err');
+  const go = async () => {
+    err.textContent = '';
+    try {
+      const r = await unlock();
+      if (lockState().enc) auth.unlocked(r.key, r.cache);
+      if (pending) auth.set(pending);
+      start();
+    } catch (e) { err.textContent = e && e.name === 'NotAllowedError' ? 'Face ID was cancelled. Tap to try again.' : (e.message || 'Couldn\'t unlock.'); }
+  };
+  const cfg = (() => { try { return { avatar: JSON.parse((cached() || {}).settings.game).avatar }; } catch (e) { return {}; } })();
+  document.body.replaceChildren(h('div.pair', null,
+    avatarCanvas(avatarOf(cfg), 'ok', 3), h('h1', null, 'LIFE RPG'), h('p.muted', null, 'Locked. Your data stays hidden until you confirm it\'s you.'),
+    h('div.btns', null, h('button.btn.gold.block', { onclick: go }, 'UNLOCK WITH FACE ID')), err,
+    h('details', { style: 'margin-top:26px;text-align:left' }, h('summary.small.muted', null, 'Can\'t use Face ID?'),
+      h('p.small.muted', null, 'Sign in again with your Google account. This removes the lock and the saved copy on this device; your data in Google Sheets is not affected.'),
+      h('div.btns', null, h('button.btn.ghost.block', { onclick: () => { auth.clear(); wipeLock(); S.locked = false; renderPair(); } }, 'Sign in with Google again')))));
+}
+let lastHidden = 0;
+function relockNow() {
+  relock(); if (lockState().enc) auth.forget();
+  S.data = null; S.g = null;
+  renderLock(null);
 }
 async function refresh(quiet) {
   const ok = await act(async () => {
@@ -113,7 +148,12 @@ async function refresh(quiet) {
   if (!gameCfg().start) await saveGame({ start: today(), name: gameCfg().name || 'Hero' });
   checkLevelUp();
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.data && auth.key) refresh(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { lastHidden = Date.now(); return; }
+  if (S.locked) return;
+  if (lockOn() && lastHidden && Date.now() - lastHidden > RELOCK_MS) return relockNow();
+  if (S.data && auth.key) refresh(true);
+});
 
 function renderPair(msg) {
   const inp = h('input.in', { placeholder: 'Paste access key', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
@@ -137,7 +177,7 @@ function renderPair(msg) {
 
 // ---------- render utama ----------
 function render() {
-  if (!S.data || !S.g) return;
+  if (S.locked || !S.data || !S.g) return;
   const y = window.scrollY;
   const views = { home: viewHome, jurnal: viewJurnal, train: viewTrain, arena: viewArena, harta: viewHarta };
   document.body.replaceChildren(hud(), h('main', null, views[S.view]()), nav());
@@ -518,12 +558,33 @@ function openSettings() {
         const s = Math.max(0, Math.min(50, Number(share.value) || 0)) / 100;
         if (await saveGame({ name: name.value.trim() || 'Hero', share: s })) close();
       } }, 'Save')),
+      lockBox(),
       h('p.small.muted', { style: 'margin-top:18px' }, h('a', { href: 'https://github.com/aulianadhif06/life-rpg/blob/main/CREDITS.md', target: '_blank', rel: 'noopener', style: 'color:inherit' }, 'Art credits')),
       h('p.small.muted', null, 'Adventure started ' + shortDate(S.g.start) + ' ' + S.g.start.slice(0, 4) + '. Your data lives in your Google Sheet; this device only keeps a copy.'),
       h('div.btns', null,
         h('button.btn.ghost', { onclick: () => { close(); refresh(true); } }, 'Refresh data'),
-        h('button.btn.red', { onclick: () => { if (confirm('Sign out on this device?')) { auth.clear(); location.reload(); } } }, 'Sign out')));
+        h('button.btn.red', { onclick: () => { if (confirm('Sign out on this device?')) { auth.clear(); wipeLock(); location.reload(); } } }, 'Sign out')));
   });
+}
+function lockBox() {
+  const box = h('div.wsec', { style: 'margin-top:18px' });
+  const paint = async () => {
+    const on = lockOn(), st = lockState(), ok = await lockSupported();
+    box.replaceChildren(h('div.wlab', null, 'Face ID lock'),
+      h('p.small.muted', null, on
+        ? (st.enc ? 'On. The app asks for Face ID when it opens or after ' + Math.round(RELOCK_MS / 60000) + ' minutes in the background, and your key and data on this phone are encrypted.'
+          : 'On. The app asks for Face ID, but this browser can\'t encrypt the saved data, so the lock mainly stops casual access.')
+        : ok ? 'Ask for Face ID (or your passcode) every time the app opens.' : 'This browser doesn\'t offer Face ID or Touch ID for web apps.'),
+      h('div.btns', null, on
+        ? h('button.btn.ghost', { onclick: async () => { if (!confirm('Turn off the Face ID lock on this device?')) return; disableLock(auth.key, cached()); toast('Face ID lock is off'); paint(); } }, 'Turn off')
+        : ok ? h('button.btn', { onclick: async () => {
+          try { const r = await enableLock(auth.key, cached()); toast(r.enc ? 'Face ID lock is on. Data encrypted.' : 'Face ID lock is on'); }
+          catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Face ID setup was cancelled' : '⚠ ' + (e.message || 'Couldn\'t set up Face ID'), 4000); }
+          paint();
+        } }, 'Turn on Face ID lock') : null));
+  };
+  paint();
+  return box;
 }
 function showLevelUp(lvl) {
   modal('', close => h('div.lvlup', null, h('div.big', null, 'LEVEL UP!'), h('div', { style: 'display:flex;justify-content:center;margin:14px 0' }, avatarCanvas(avatarOf(gameCfg()), 'happy', 3)),
