@@ -7,6 +7,8 @@ export const PAL = {
   b: '#29366f', B: '#3b5dc9', c: '#41a6f6', C: '#73eff7', p: '#5d275d',
 };
 
+import { composeHero, paintGrid, HERO_W, HERO_H } from './hero.js';
+
 const mirror = rows => rows.map(r => r + [...r].reverse().join(''));
 
 // ---------- hero 16x16 ----------
@@ -149,13 +151,18 @@ export function paintHero(ctx, level, status, frame, s, ox = 0, oy = 0) {
   heroExtras(level, status, frame).forEach(([x, y, col]) => { ctx.fillStyle = col; ctx.fillRect(ox + x * s, oy + (y + (y < 14 ? bob : 0)) * s, s, s); });
 }
 
-/** Hero animasi (2 frame idle). */
-export function heroCanvas(level, status, scale = 6) {
-  const [c, ctx] = canvas(16, 16, scale, 'hero');
+/** Animated hero (2-frame idle) from a look object. */
+export function heroCanvas(look, status, scale = 4) {
+  const [c, ctx] = canvas(HERO_W, HERO_H, scale, 'hero');
   let f = 0;
-  const draw = () => { ctx.clearRect(0, 0, c.width, c.height); paintHero(ctx, level, status, f, scale); };
+  const grid = composeHero(look, status);
+  const draw = () => {
+    ctx.clearRect(0, 0, c.width, c.height);
+    if (status === 'ko') { ctx.save(); ctx.translate(c.width / 2, c.height / 2); ctx.rotate(Math.PI / 2); ctx.translate(-c.width / 2, -c.height / 2); paintGrid(ctx, grid, scale, 0, 0, 0); ctx.restore(); return; }
+    paintGrid(ctx, grid, scale, 0, 0, f);
+  };
   draw();
-  c._timer = setInterval(() => { if (!c.isConnected) return clearInterval(c._timer); f ^= 1; draw(); }, status === 'ko' ? 900 : 550);
+  c._timer = setInterval(() => { if (!c.isConnected) return clearInterval(c._timer); f ^= 1; draw(); }, status === 'ko' ? 900 : 600);
   return c;
 }
 

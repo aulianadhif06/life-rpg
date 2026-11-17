@@ -2,6 +2,7 @@ import { api, auth, cached } from './api.js';
 import { CONNECT_URL } from './config.js';
 import { compute, RULES } from './game.js';
 import { heroCanvas, bossCanvas, carCanvas, iconCanvas } from './sprites.js';
+import { lookOf, DEFAULT_LOOK, SKINS, HAIR_COLORS, EYE_COLORS, CLOTH_COLORS, HAIR_STYLES, EYE_STYLES, TOPS, BOTTOMS, SHOES, OUTERS, ACCESSORIES, UNLOCKS } from './hero.js';
 import {
   EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
   cycleName, MONTHS, DAYS, balances, worth, netWorth, goalProgress, catLabel,
@@ -98,7 +99,7 @@ async function boot() {
   if (!auth.key) return renderPair();
   const c = cached();
   if (c) { S.data = c; recompute(false); render(); }
-  else document.body.replaceChildren(h('div.pair', null, heroCanvas(1, 'ok', 8), h('h1', null, 'LIFE RPG'), h('p.muted', null, 'Loading your world…')));
+  else document.body.replaceChildren(h('div.pair', null, heroCanvas(DEFAULT_LOOK, 'ok', 4), h('h1', null, 'LIFE RPG'), h('p.muted', null, 'Loading your world…')));
   await refresh(!!c);
 }
 async function refresh(quiet) {
@@ -124,7 +125,7 @@ function renderPair(msg) {
     catch (e) { auth.clear(); err.textContent = e.message; }
   };
   document.body.replaceChildren(h('div.pair', null,
-    heroCanvas(1, 'ok', 8), h('h1', null, 'LIFE RPG'),
+    heroCanvas(DEFAULT_LOOK, 'ok', 4), h('h1', null, 'LIFE RPG'),
     h('p.muted', null, 'Your money and health, played as an adventure.'),
     h('div.btns', null, h('button.btn.gold.block', { onclick: () => { location.href = CONNECT_URL; } }, 'CONTINUE WITH GOOGLE')),
     err,
@@ -151,7 +152,7 @@ function hud() {
       h('div', null, h('div.lab', null, h('span', null, 'HP'), h('span.num', null, g.hp + '/' + g.hpMax)), bar(g.hp / g.hpMax, 'hp seg')),
       h('div', null, h('div.lab', null, h('span', null, 'XP'), h('span.num', null, g.xpIn + '/' + g.xpNeed)), bar(g.xpIn / g.xpNeed, 'xp seg thin'))),
     h('div.row', null,
-      h('div.gold', { title: 'Gold' }, iconCanvas('coin', 2), h('span.num', null, g.gold)),
+      h('div.gold', { title: 'Gold' }, iconCanvas('coin', 2), h('span.num', null, goldLeft())),
       h('button.gear', { onclick: openSettings, 'aria-label': 'Settings' }, iconCanvas('gear', 3))));
 }
 function nav() {
@@ -183,7 +184,7 @@ function speech() {
 }
 function viewHome() {
   const g = S.g, cfg = gameCfg(), t = g.today;
-  const scene = h('section.panel.scene', null, h('div.stage', null, h('div.stars'), heroCanvas(g.level, g.status, 7)),
+  const scene = h('section.panel.scene', null, h('div.stage', null, h('div.stars'), heroCanvas(lookOf(cfg), g.status, 4), h('button.btn.sm.ghost.edit', { onclick: openWardrobe }, 'Customize')),
     h('div.hero-name', null, cfg.name || 'Hero', h('span.status-chip.' + g.status, null, STATUS_TXT[g.status])),
     h('div.small.muted', null, 'Lv ' + g.level + ' · ' + g.title + ' · ' + g.streak + '-day streak'),
     h('div.bubble', null, speech()));
@@ -515,10 +516,79 @@ function openSettings() {
   });
 }
 function showLevelUp(lvl) {
-  modal('', close => h('div.lvlup', null, h('div.big', null, 'LEVEL UP!'), h('div', { style: 'display:flex;justify-content:center;margin:14px 0' }, heroCanvas(lvl, 'ok', 8)),
+  modal('', close => h('div.lvlup', null, h('div.big', null, 'LEVEL UP!'), h('div', { style: 'display:flex;justify-content:center;margin:14px 0' }, heroCanvas(lookOf(gameCfg()), 'ok', 4)),
     h('p', null, 'You\'re now Lv ' + lvl + ' · ' + S.g.title),
-    [5, 10, 15, 20].includes(lvl) ? h('p.gold', null, 'New gear unlocked!') : null,
+    unlockedAt(lvl).length ? h('p.gold', null, 'Unlocked: ' + unlockedAt(lvl).join(', ')) : null,
     h('button.btn.gold', { onclick: close }, 'NICE')));
+}
+
+// ---------- wardrobe ----------
+const goldLeft = () => Math.max(0, S.g.gold - (Number(gameCfg().spent) || 0));
+const NAMES = { messy: 'Messy', long: 'Long', spiky: 'Spiky', bob: 'Bob', bun: 'Bun', buzz: 'Buzz cut', round: 'Round', sharp: 'Sharp', soft: 'Soft', happy: 'Happy',
+  tee: 'T-shirt', tank: 'Tank top', shirt: 'Shirt', vest: 'Vest', hoodie: 'Hoodie', pants: 'Pants', shorts: 'Shorts', skirt: 'Skirt', baggy: 'Baggy pants',
+  sneakers: 'Sneakers', boots: 'Boots', none: 'None', jacket: 'Jacket', coat: 'Long coat', cape: 'Cape', headband: 'Headband', glasses: 'Glasses', scarf: 'Scarf', crown: 'Crown' };
+const KIND_NAME = { top: 'Top', bottom: 'Bottom', shoes: 'Shoes', outer: 'Outerwear', acc: 'Accessory', hair: 'Hair' };
+function unlockedAt(lvl) {
+  return Object.entries(UNLOCKS).filter(([, u]) => u.lvl === lvl).map(([k]) => NAMES[k.split(':')[1]] + ' (' + KIND_NAME[k.split(':')[0]].toLowerCase() + ')');
+}
+function openWardrobe() {
+  const cfg = gameCfg(), lvl = S.g.level;
+  const draft = { ...lookOf(cfg) };
+  const owned = new Set(cfg.owned || []), buying = new Set();
+  const lockOf = key => {
+    const u = UNLOCKS[key];
+    if (!u || owned.has(key) || buying.has(key)) return null;
+    if (u.lvl) return lvl >= u.lvl ? null : { text: 'Lv ' + u.lvl };
+    return { text: u.gold + 'G', gold: u.gold };
+  };
+  modal('Customize hero', close => {
+    const prev = h('div.wardrobe-prev');
+    const body = h('div');
+    const cost = () => [...buying].reduce((s, k) => s + UNLOCKS[k].gold, 0);
+    const saveBtn = h('button.btn.gold.block');
+    const err = h('div.err');
+    const paint = () => {
+      prev.replaceChildren(heroCanvas(draft, 'ok', 5));
+      body.replaceChildren(...sections());
+      const c = cost();
+      saveBtn.textContent = c ? 'BUY & SAVE · ' + c + 'G' : 'SAVE LOOK';
+      err.textContent = c > goldLeft() ? 'Not enough gold (' + goldLeft() + 'G available).' : '';
+    };
+    const chips = (field, opts, kind) => h('div.chips', null, Object.keys(opts).map(k => {
+      const key = kind + ':' + k, lock = kind ? lockOf(key) : null;
+      const on = draft[field] === k;
+      return h('button' + (on ? '.on' : '') + (lock ? '.locked' : ''), { type: 'button', onclick: () => {
+        if (lock && !lock.gold) { toast('Unlocks at ' + lock.text); return; }
+        if (lock && lock.gold) buying.add(key);
+        if (draft[field] !== k) [...buying].forEach(b => { if (b.startsWith(kind + ':') && b !== key) buying.delete(b); });
+        draft[field] = k; paint();
+      } }, NAMES[k] || k, lock ? h('span.lock', null, ' 🔒 ' + lock.text) : (UNLOCKS[key] && UNLOCKS[key].gold && buying.has(key) ? h('span.lock', null, ' ' + UNLOCKS[key].gold + 'G') : null));
+    }));
+    const swatches = (field, colors) => h('div.swatches', null, colors.map((c, i) => h('button' + (draft[field] === i ? '.on' : ''), {
+      type: 'button', style: 'background:' + c, 'aria-label': 'Colour ' + (i + 1), onclick: () => { draft[field] = i; paint(); } })));
+    const sec = (title, ...kids) => h('div.wsec', null, h('div.tiny.muted', null, title), ...kids);
+    const sections = () => [
+      sec('SKIN', swatches('skin', SKINS)),
+      sec('HAIR', chips('hair', HAIR_STYLES, 'hair'), swatches('hairColor', HAIR_COLORS)),
+      sec('EYES', chips('eyes', EYE_STYLES, ''), swatches('eyeColor', EYE_COLORS)),
+      sec('TOP', chips('top', TOPS, 'top'), swatches('topColor', CLOTH_COLORS)),
+      sec('BOTTOM', chips('bottom', BOTTOMS, 'bottom'), swatches('bottomColor', CLOTH_COLORS)),
+      sec('SHOES', chips('shoes', SHOES, 'shoes'), swatches('shoesColor', CLOTH_COLORS)),
+      sec('OUTERWEAR', chips('outer', OUTERS, 'outer'), draft.outer !== 'none' ? swatches('outerColor', CLOTH_COLORS) : null),
+      sec('ACCESSORY', chips('acc', ACCESSORIES, 'acc')),
+    ];
+    saveBtn.onclick = async () => {
+      const c = cost();
+      if (c > goldLeft()) return;
+      const spent = (Number(cfg.spent) || 0) + c;
+      if (await saveGame({ look: draft, owned: [...owned, ...buying], spent })) { close(); toast(c ? 'Purchased and saved!' : 'Looking good!'); }
+    };
+    paint();
+    return h('div', null, h('div.row.between', { style: 'margin-bottom:8px' }, h('span.small.muted', null, 'Gold: ' + goldLeft() + 'G'),
+      h('button.btn.sm.ghost', { type: 'button', onclick: () => { Object.assign(draft, DEFAULT_LOOK); buying.clear(); paint(); } }, 'Reset')),
+      prev, body, err, h('div.btns', null, saveBtn),
+      h('p.small.muted', null, 'Some items unlock as you level up; others cost gold you earn from quests, streaks and bosses.'));
+  });
 }
 
 // ---------- service worker ----------
