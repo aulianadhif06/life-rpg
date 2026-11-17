@@ -2,6 +2,7 @@ import { api, auth, cached } from './api.js';
 import { CONNECT_URL } from './config.js';
 import { compute, RULES } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
+import { EX, WEEKDAYS, SPLIT_TXT, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
 import { avatarCanvas, avatarOf, DEFAULT_AVATAR, HAIRS, TOPS, BOTTOMS, SKIN_TONES, HAIR_COLORS, swatch } from './hero.js';
 import {
   EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
@@ -41,7 +42,7 @@ function floatText(text, color, i = 0) {
 
 // ---------- state ----------
 const S = { data: null, g: null, view: 'home', calMonth: null, calSel: null, busy: false, txSel: null };
-const VIEWS = [['home', 'Home', 'sword'], ['jurnal', 'Journal', 'star'], ['add', '', ''], ['arena', 'Budget', 'shield'], ['harta', 'Vault', 'chest']];
+const VIEWS = [['home', 'Home', 'sword'], ['jurnal', 'Journal', 'star'], ['add', '', ''], ['train', 'Train', 'dumbbell'], ['arena', 'Budget', 'shield'], ['harta', 'Vault', 'chest']];
 const LAST = 'lrpg.last';
 
 const today = () => todayLocal();
@@ -138,7 +139,7 @@ function renderPair(msg) {
 function render() {
   if (!S.data || !S.g) return;
   const y = window.scrollY;
-  const views = { home: viewHome, jurnal: viewJurnal, arena: viewArena, harta: viewHarta };
+  const views = { home: viewHome, jurnal: viewJurnal, train: viewTrain, arena: viewArena, harta: viewHarta };
   document.body.replaceChildren(hud(), h('main', null, views[S.view]()), nav());
   window.scrollTo(0, y);
 }
@@ -227,7 +228,15 @@ function viewHome() {
       h('span.fx', null, e.xp ? h('span.cyan', null, '+' + e.xp + 'XP ') : null, e.gold ? h('span.gold', null, '+' + e.gold + 'G ') : null,
         e.hp ? h('span' + (e.hp > 0 ? '.green' : '.red'), null, (e.hp > 0 ? '+' : '') + e.hp + 'HP') : null)))) : h('div.empty', null, 'Your adventure starts today.'));
 
-  return h('div', null, scene, todayP, missP, questP, bossP, logP);
+  const tr = trainCfg();
+  let gymP = null;
+  if (tr && tr.plan) {
+    const sess = sessionOn(tr, t.date), done = workouts().some(w => w.date === t.date), late = (g.gym.pending || []).filter(p => p.date < t.date);
+    if (late.length && !done) gymP = panel('Gym', 'make-up day', h('p.small', null, 'You missed ' + late[0].name + '. Do it today or lose ' + (-RULES.gym.missed) + ' HP at midnight.'), h('div.btns', null, h('button.btn.gold', { onclick: () => go('train') }, 'Go to training')));
+    else if (sess && !done && !restOn(t.date)) gymP = panel('Gym', 'today', h('div.row', null, iconCanvas('dumbbell', 3), h('div.grow', null, h('div.t1', null, sess.name), h('div.small.muted', null, 'Scheduled for today. +' + RULES.gym.xp + ' XP when you finish.'))),
+      h('div.btns', null, h('button.btn.gold', { onclick: () => openWorkout(loadDraft() ? { resume: true } : { dayId: sess.id }) }, loadDraft() ? 'Resume workout' : 'Start workout')));
+  }
+  return h('div', null, scene, todayP, gymP, missP, questP, bossP, logP);
 }
 function checkin(date) {
   return act(() => api('logAdd', [{ date, kind: 'checkin', data: { note: 'no transactions' } }]), 'Checked in for ' + shortDate(date));
@@ -592,6 +601,340 @@ function openWardrobe() {
       h('button.btn.ghost', { type: 'button', onclick: () => { Object.assign(draft, DEFAULT_AVATAR); buying.clear(); paint(); } }, 'Reset')),
       h('p.small.muted', null, goldLeft() + 'G available. Some items unlock with levels; others cost gold from quests, streaks and bosses.'));
   });
+}
+
+// ---------- TRAIN ----------
+const trainCfg = () => gameCfg().train || null;
+const workouts = () => (S.data.journal || []).filter(j => j.kind === 'workout')
+  .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt);
+const restOn = d => (S.data.journal || []).find(j => j.kind === 'rest' && j.date === d);
+const WO_KEY = 'lrpg.wo';
+const loadDraft = () => { try { return JSON.parse(localStorage.getItem(WO_KEY) || 'null'); } catch (e) { return null; } };
+const saveDraft = d => { try { d ? localStorage.setItem(WO_KEY, JSON.stringify(d)) : localStorage.removeItem(WO_KEY); } catch (e) { /* ignore */ } };
+const kgTxt = kg => (kg > 0 ? (Math.round(kg * 100) / 100) + ' kg' : 'BW');
+const setsTxt = sets => sets.map(([kg, r]) => (kg > 0 ? (Math.round(kg * 100) / 100) + '×' : '') + r).join(' · ');
+const planDay = (tr, id) => tr && tr.plan && tr.plan.days.find(d => d.id === id);
+
+function nextSession(tr, from) {
+  for (let i = 1; i <= 7; i++) { const d = addDays(from, i), s = sessionOn(tr, d); if (s) return { date: d, ...s }; }
+  return null;
+}
+function weekCells(tr) {
+  const t = today(), ws = weekStart(t), ws2 = workouts();
+  const byDay = {}; ws2.forEach(w => { (byDay[w.date] = byDay[w.date] || []).push(w); });
+  return WEEKDAYS.map((wd, i) => {
+    const d = addDays(ws, i), s = sessionOn(tr, d), done = byDay[d], rest = restOn(d);
+    let st = 'up';
+    if (done) st = 'done';
+    else if (!s) st = 'off';
+    else if (rest) st = 'rest';
+    else if (d < t) { const nx = addDays(d, 1); st = byDay[nx] ? 'done' : nx >= t ? 'late' : 'miss'; }
+    return h('div.wk.' + st + (d === t ? '.today' : ''), null, h('b', null, wd), h('span', null, done ? '✓' : s ? s.id : '·'));
+  });
+}
+
+function viewTrain() {
+  const tr = trainCfg(), t = today(), g = S.g;
+  if (!tr || !tr.plan) {
+    return h('div', null, panel('Training', null,
+      h('p', null, 'Set up your gym routine. Answer a few questions and get a recommended plan, or enter the plan you already follow.'),
+      h('div.list', null,
+        h('div.item', null, iconCanvas('dumbbell', 3), h('div.grow', null, h('div.t1', null, 'Log every set'), h('div.t2', null, 'Weights and reps are filled in from last time, with a rest timer between sets.'))),
+        h('div.item', null, iconCanvas('star', 3), h('div.grow', null, h('div.t1', null, 'Earn XP for showing up'), h('div.t2', null, '+' + RULES.gym.xp + ' XP, +' + RULES.gym.gold + ' G and +' + RULES.gym.hp + ' HP per workout; +' + RULES.gym.prXp + ' XP for every personal record.'))),
+        h('div.item', null, iconCanvas('heart', 3), h('div.grow', null, h('div.t1', null, 'Skipping costs HP'), h('div.t2', null, 'A scheduled session you miss costs ' + (-RULES.gym.missed) + ' HP. You get one extra day to make it up.')))),
+      h('div.btns', null, h('button.btn.gold.block', { onclick: openTrainSetup }, 'Set up training'))));
+  }
+  const ws = workouts(), draft = loadDraft();
+  const sess = sessionOn(tr, t), doneToday = ws.filter(w => w.date === t);
+  const makeup = (g.gym.pending || []).filter(p => p.date < t);
+  const startBtn = (id, label) => h('button.btn.gold', { onclick: () => openWorkout({ dayId: id }) }, label);
+  const todayKids = [];
+  if (draft) todayKids.push(h('div.callout', null, h('b', null, 'Workout in progress: ' + draft.name), h('div.small.muted', null, 'Started ' + shortDate(draft.date) + '. Your sets are saved on this phone.')),
+    h('div.btns', null, h('button.btn.gold', { onclick: () => openWorkout({ resume: true }) }, 'Resume workout')));
+  else {
+    makeup.forEach(p => {
+      const d = planDay(tr, sessionOn(tr, p.date).id);
+      todayKids.push(h('div.callout.warn', null, h('b', null, 'You missed ' + p.name + ' (' + WEEKDAYS[wdOf(p.date)] + ').'),
+        h('div.small', null, 'Do it today to keep your HP. At midnight it costs ' + (-RULES.gym.missed) + ' HP.')),
+      h('div.btns', null, startBtn(d ? d.id : null, 'Start ' + p.name)));
+    });
+    if (doneToday.length) todayKids.push(h('div.callout.good', null, h('b', null, 'Done today: ' + doneToday.map(w => w.data.name).join(', ')),
+      h('div.small.muted', null, doneToday.map(w => setCount(w) + ' sets · ' + Math.round(volume(w)).toLocaleString('en-US') + ' kg lifted' + (w.data.min ? ' · ' + w.data.min + ' min' : '')).join(' / '))));
+    else if (sess && restOn(t)) todayKids.push(h('div.callout', null, h('b', null, 'Rest day taken (' + restOn(t).data.reason + ')'), h('div.small.muted', null, sess.name + ' is excused today. No HP lost.')),
+      h('div.btns', null, h('button.btn.sm.ghost', { onclick: () => act(() => api('logDelete', restOn(t).id), 'Rest day removed') }, 'Undo rest day')));
+    else if (sess) {
+      const d = planDay(tr, sess.id);
+      todayKids.push(h('div.big-num', null, sess.name), h('div.small.muted', null, d ? d.ex.length + ' exercises · ' + d.ex.reduce((s, x) => s + Number(x.sets || 0), 0) + ' sets · about ' + (tr.setup && tr.setup.minutes || 60) + ' min' : ''),
+        h('div.btns', null, startBtn(sess.id, 'Start workout'), h('button.btn.ghost', { onclick: () => openRestDay(t) }, 'Can\'t train today')));
+    } else {
+      const n = nextSession(tr, t);
+      todayKids.push(h('div.big-num', null, 'Rest day'), h('div.small.muted', null, n ? 'Next: ' + n.name + ' on ' + DAYS[dow(n.date)] + ', ' + shortDate(n.date) + '.' : 'No sessions scheduled.'));
+    }
+    todayKids.push(h('div.btns', null,
+      h('button.btn.sm.ghost', { onclick: () => pickDayThen(id => openWorkout({ dayId: id })) }, 'Other workout'),
+      h('button.btn.sm.ghost', { onclick: () => pickDayThen(id => openWorkout({ dayId: id, past: true })) }, 'Log a past workout')));
+  }
+  const todayP = panel('Today', shortDate(t), todayKids);
+  const wk = g.gym.week;
+  const weekP = panel('This week', wk.sched ? wk.done + '/' + wk.sched + ' done' : '', h('div.week', null, weekCells(tr)),
+    h('p.small.muted', null, 'Clear every scheduled session this week for +' + RULES.gym.weekXp + ' XP and +' + RULES.gym.weekGold + ' G.'));
+
+  const sched = schedOn(tr, t) || {};
+  const planP = panel('Your plan', tr.plan.source === 'rec' ? 'recommended' : 'custom',
+    h('div.t1', { style: 'margin-bottom:6px' }, tr.plan.name),
+    tr.plan.days.map(d => {
+      const on = WEEKDAYS.filter((_, i) => sched[i] === d.id);
+      return h('details.pday', null, h('summary', null, h('b', null, d.id + ' · ' + d.name), h('span.small.muted', null, on.length ? on.join(', ') : 'not scheduled')),
+        h('div.list', null, d.ex.map(x => h('div.item', null, h('div.grow', null, h('div', null, x.name), h('div.t2', null, x.sets + ' × ' + x.reps + (EX[x.id] && EX[x.id].secs ? ' s' : '') + ' · rest ' + fmtRest(x.rest)))))));
+    }),
+    h('div.btns', null, h('button.btn.sm', { onclick: () => openPlanEditor(tr.plan, sched) }, 'Edit plan'), h('button.btn.sm.ghost', { onclick: openTrainSetup }, 'New plan')));
+
+  const best = Object.entries(prTable(ws)).sort((a, b) => (a[1].date < b[1].date ? 1 : -1)).slice(0, 8);
+  const prP = panel('Personal records', null, best.length ? h('div.list', null, best.map(([n, p]) => h('div.item', null, h('div.grow', null, h('div.t1', null, n), h('div.t2', null, shortDate(p.date))),
+    h('div.amt', null, p.bw ? p.reps + ' reps' : kgTxt(p.kg) + ' × ' + p.reps), !p.bw ? h('div.small.muted', { style: 'width:70px;text-align:right' }, '≈' + Math.round(p.v) + ' 1RM') : null)))
+    : h('div.empty', null, 'Records show up after your second session of an exercise.'));
+
+  const histP = panel('History', ws.length ? ws.length + (ws.length === 1 ? ' workout' : ' workouts') : '', ws.length ? h('div.list', null, ws.slice(-10).reverse().map(w => h('button.item.plain', { onclick: () => openWorkoutDetail(w) },
+    iconCanvas('dumbbell', 2), h('div.grow', null, h('div.t1', null, w.data.name), h('div.t2', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + ' · ' + setCount(w) + ' sets' + (w.data.min ? ' · ' + w.data.min + ' min' : ''))),
+    h('div.amt', null, Math.round(volume(w)).toLocaleString('en-US') + ' kg')))) : h('div.empty', null, 'No workouts logged yet.'));
+
+  return h('div', null, todayP, weekP, planP, prP, histP);
+}
+
+function pickDayThen(fn) {
+  const tr = trainCfg();
+  modal('Which workout?', close => h('div.list', null, tr.plan.days.map(d => h('button.item.plain', { onclick: () => { close(); fn(d.id); } },
+    h('div.grow', null, h('div.t1', null, d.id + ' · ' + d.name), h('div.t2', null, d.ex.map(x => x.name).slice(0, 4).join(', ') + (d.ex.length > 4 ? '…' : ''))))),
+  h('button.item.plain', { onclick: () => { close(); fn(null); } }, h('div.grow', null, h('div.t1', null, 'Empty workout'), h('div.t2', null, 'Add exercises as you go')))));
+}
+
+function openRestDay(date) {
+  modal('Take a rest day', close => {
+    let reason = 'sick';
+    const chips = h('div.chips');
+    const paint = () => chips.replaceChildren(...[['sick', 'Sick'], ['injured', 'Injured'], ['travel', 'Travelling'], ['other', 'Other']].map(([k, l]) => h('button' + (reason === k ? '.on' : ''), { type: 'button', onclick: () => { reason = k; paint(); } }, l)));
+    paint();
+    return h('div', null, h('p.small', null, 'Today\'s session is excused: no HP lost, no XP earned. Use it when you genuinely can\'t train.'), chips,
+      h('div.btns', null, h('button.btn.gold.block', { onclick: async () => { if (await act(() => api('logAdd', [{ date, kind: 'rest', data: { reason } }]), 'Rest day saved')) close(); } }, 'Save rest day')));
+  });
+}
+
+// ----- setup -----
+function openTrainSetup() {
+  const old = (trainCfg() && trainCfg().setup) || {};
+  const st = { goal: old.goal || 'muscle', level: old.level || 'beginner', days: old.days || [0, 2, 4], minutes: old.minutes || 60, equip: old.equip || 'gym' };
+  modal('Training setup', close => {
+    const body = h('div');
+    const one = (field, opts) => h('div.chips', null, opts.map(([k, l]) => h('button' + (st[field] === k ? '.on' : ''), { type: 'button', onclick: () => { st[field] = k; paint(); } }, l)));
+    const err = h('div.err');
+    const paint = () => body.replaceChildren(
+      h('label.f', null, 'Main goal'), one('goal', [['muscle', 'Build muscle'], ['strength', 'Get stronger'], ['fitness', 'General fitness']]),
+      h('label.f', null, 'Training experience'), one('level', [['beginner', 'Under 1 year'], ['intermediate', '1–3 years'], ['advanced', '3+ years']]),
+      h('label.f', null, 'Training days (' + st.days.length + ' a week)'),
+      h('div.chips', null, WEEKDAYS.map((w, i) => h('button' + (st.days.includes(i) ? '.on' : ''), { type: 'button', onclick: () => {
+        st.days = st.days.includes(i) ? st.days.filter(x => x !== i) : [...st.days, i].sort((a, b) => a - b); paint(); } }, w))),
+      h('label.f', null, 'Time per session'), one('minutes', [[45, '45 min'], [60, '60 min'], [75, '75 min'], [90, '90 min']]),
+      h('label.f', null, 'Equipment'), one('equip', [['gym', 'Full gym'], ['db', 'Dumbbells only'], ['bw', 'Bodyweight only']]),
+      st.days.length ? h('p.small.muted', null, 'Recommended for ' + st.days.length + ' days: ' + SPLIT_TXT[Math.min(6, st.days.length)] + '.') : null);
+    paint();
+    const ok = () => { if (!st.days.length) { err.textContent = 'Pick at least one training day.'; return false; } if (st.days.length > 6) { err.textContent = 'Keep at least one rest day a week.'; return false; } err.textContent = ''; return true; };
+    return h('div', null, body, err, h('div.btns', null,
+      h('button.btn.gold.block', { onclick: () => { if (!ok()) return; close(); previewPlan(buildRec(st), st); } }, 'Recommend a plan'),
+      h('button.btn.ghost.block', { onclick: () => { if (!ok()) return; close(); openPlanEditor(blankPlan(st), null, st); } }, 'I\'ll enter my own plan')));
+  });
+}
+function buildRec(st) {
+  const p = recommend(st);
+  p.days.forEach(d => d.ex.forEach(x => {
+    const e = EX[x.id];
+    if (st.goal === 'strength' && e && e.k === 'c' && !e.secs && e.e !== 'b') { x.reps = '4-6'; x.rest = Math.max(x.rest, 180); x.sets = Math.max(x.sets, 4); }
+    if (st.goal === 'fitness') { x.sets = Math.min(x.sets, 3); x.rest = Math.min(x.rest, 90); }
+  }));
+  return p;
+}
+function blankPlan(st) {
+  const days = st.days.map((wd, i) => ({ id: 'ABCDEF'[i], name: 'Day ' + (i + 1), ex: [] }));
+  const sched = {}; st.days.forEach((wd, i) => { sched[wd] = days[i].id; });
+  return { name: 'My plan', source: 'custom', days, sched };
+}
+function previewPlan(p, st) {
+  modal('Your recommended plan', close => h('div', null,
+    h('p.small', null, p.name.replace('Recommended · ', 'A ') + '. Compound lifts first, then isolation work. Add weight once every set reaches the top of the rep range (the logger tells you when).'),
+    p.days.map(d => h('div.pday-prev', null, h('div.t1', null, d.id + ' · ' + d.name + '  ', h('span.small.muted', null, WEEKDAYS.filter((_, i) => p.sched[i] === d.id).join(', '))),
+      h('div.small.muted', null, d.ex.map(x => x.name + ' ' + x.sets + '×' + x.reps).join(' · ')))),
+    h('div.btns', null,
+      h('button.btn.gold.block', { onclick: async () => { if (await savePlan(p, p.sched, st)) close(); } }, 'Use this plan'),
+      h('button.btn.ghost.block', { onclick: () => { close(); openPlanEditor(p, p.sched, st); } }, 'Change it first'))));
+}
+async function savePlan(plan, sched, setup) {
+  const tr = trainCfg() || {};
+  const t = today();
+  const hist = (tr.sched || []).filter(s => s.from < t);
+  hist.push({ from: t, map: sched });
+  const clean = { name: plan.name, source: plan.source, days: plan.days.map(d => ({ id: d.id, name: d.name, ex: d.ex.map(x => ({ id: x.id || '', name: x.name, sets: Number(x.sets) || 3, reps: String(x.reps || '8-12'), rest: Number(x.rest) || 90 })) })) };
+  return saveGame({ train: { ...tr, setup: setup || tr.setup || null, plan: clean, sched: hist } }).then(ok => { if (ok) toast('Plan saved'); return ok; });
+}
+
+// ----- plan editor -----
+function openPlanEditor(plan0, sched0, setup) {
+  const plan = JSON.parse(JSON.stringify(plan0));
+  const sched = { ...(sched0 || plan0.sched || {}) };
+  modal('Edit plan', close => {
+    const body = h('div'), err = h('div.err');
+    const nextId = () => 'ABCDEFGH'.split('').find(c => !plan.days.some(d => d.id === c));
+    const paint = () => body.replaceChildren(
+      h('label.f', null, 'Plan name'), h('input.in', { value: plan.name, maxlength: 60, oninput: e => { plan.name = e.target.value; } }),
+      ...plan.days.map((d, di) => h('div.pedit', null,
+        h('div.row', null, h('b.badge', null, d.id), h('input.in.grow', { value: d.name, maxlength: 30, 'aria-label': 'Day name', oninput: e => { d.name = e.target.value; } }),
+          h('button.btn.sm.ghost', { type: 'button', 'aria-label': 'Remove day', onclick: () => { if (d.ex.length && !confirm('Remove ' + d.name + '?')) return; plan.days.splice(di, 1); Object.keys(sched).forEach(k => { if (sched[k] === d.id) delete sched[k]; }); paint(); } }, '✕')),
+        d.ex.map((x, xi) => h('div.exrow', null,
+          h('div.grow', null, h('div.small', null, x.name),
+            h('div.exnums', null,
+              h('input.in.sm', { inputmode: 'numeric', value: x.sets, 'aria-label': 'Sets', oninput: e => { x.sets = e.target.value; } }), h('span', null, 'sets ×'),
+              h('input.in.sm.w', { value: x.reps, 'aria-label': 'Reps', oninput: e => { x.reps = e.target.value; } }), h('span', null, 'reps'),
+              h('select.in.sm.w', { 'aria-label': 'Rest', onchange: e => { x.rest = Number(e.target.value); } }, [45, 60, 90, 120, 150, 180, 240].map(s => h('option', { value: s, selected: Number(x.rest) === s }, fmtRest(s) + ' rest'))))),
+          h('div.exbtns', null,
+            h('button', { type: 'button', 'aria-label': 'Move up', disabled: xi === 0, onclick: () => { d.ex.splice(xi - 1, 0, d.ex.splice(xi, 1)[0]); paint(); } }, '▲'),
+            h('button', { type: 'button', 'aria-label': 'Move down', disabled: xi === d.ex.length - 1, onclick: () => { d.ex.splice(xi + 1, 0, d.ex.splice(xi, 1)[0]); paint(); } }, '▼'),
+            h('button', { type: 'button', 'aria-label': 'Remove exercise', onclick: () => { d.ex.splice(xi, 1); paint(); } }, '✕')))),
+        h('button.btn.sm.ghost', { type: 'button', style: 'margin-top:8px', onclick: () => pickExercise(x => { d.ex.push(x); paint(); }) }, '+ Add exercise'))),
+      plan.days.length < 7 ? h('div.btns', null, h('button.btn.sm', { type: 'button', onclick: () => { const id = nextId(); plan.days.push({ id, name: 'Day ' + (plan.days.length + 1), ex: [] }); paint(); } }, '+ Add day')) : null,
+      h('label.f', null, 'Weekly schedule'),
+      h('div.sched', null, WEEKDAYS.map((w, i) => h('label.srow', null, h('span', null, w),
+        h('select.in.sm', { onchange: e => { if (e.target.value) sched[i] = e.target.value; else delete sched[i]; } },
+          h('option', { value: '' }, 'Rest'), plan.days.map(d => h('option', { value: d.id, selected: sched[i] === d.id }, d.id + ' · ' + d.name)))))));
+    paint();
+    const save = h('button.btn.gold.block', { onclick: async () => {
+      plan.days.forEach(d => { d.name = d.name.trim() || 'Day ' + d.id; });
+      if (!plan.days.length || plan.days.every(d => !d.ex.length)) { err.textContent = 'Add at least one exercise.'; return; }
+      Object.keys(sched).forEach(k => { if (!plan.days.some(d => d.id === sched[k])) delete sched[k]; });
+      if (!Object.keys(sched).length) { err.textContent = 'Schedule at least one day.'; return; }
+      plan.name = plan.name.trim() || 'My plan';
+      if (plan0.source === 'rec' && JSON.stringify(plan.days) !== JSON.stringify(plan0.days)) plan.source = 'custom';
+      if (await savePlan(plan, sched, setup)) close();
+    } }, 'Save plan');
+    return h('div', null, body, err, h('div.btns', null, save),
+      h('p.small.muted', null, 'Schedule changes apply from today. Past days keep the schedule they had.'));
+  });
+}
+function pickExercise(onPick) {
+  modal('Add exercise', close => {
+    const q = h('input.in', { placeholder: 'Search or type a new exercise', autocomplete: 'off' });
+    const list = h('div');
+    const paint = () => {
+      const s = q.value.trim().toLowerCase();
+      const groups = {};
+      Object.entries(EX).forEach(([id, x]) => { if (!s || x.name.toLowerCase().includes(s) || x.m.toLowerCase().includes(s)) (groups[x.m] = groups[x.m] || []).push([id, x]); });
+      const custom = s && !Object.values(EX).some(x => x.name.toLowerCase() === s)
+        ? h('button.item.plain', { onclick: () => { close(); onPick({ id: '', name: q.value.trim().slice(0, 40), sets: 3, reps: '8-12', rest: 90 }); } }, h('div.grow', null, h('div.t1', null, '+ Add "' + q.value.trim() + '"'), h('div.t2', null, 'Your own exercise'))) : null;
+      list.replaceChildren(h('div.list', null, custom, Object.entries(groups).map(([m, xs]) => [h('div.glab', null, m),
+        xs.map(([id, x]) => h('button.item.plain', { onclick: () => { close(); onPick({ id, name: x.name, sets: x.k === 'c' ? 3 : 3, reps: x.reps, rest: x.rest }); } },
+          h('div.grow', null, h('div', null, x.name), h('div.t2', null, { g: 'Gym', d: 'Dumbbells', b: 'Bodyweight' }[x.e] + ' · ' + x.reps + (x.secs ? ' s' : ' reps'))))) ])));
+    };
+    q.addEventListener('input', paint); paint();
+    setTimeout(() => q.focus(), 50);
+    return h('div', null, q, list);
+  });
+}
+
+// ----- workout logger -----
+let restTimer = null;
+function beep() {
+  try { const A = window.AudioContext || window.webkitAudioContext; const a = new A(), o = a.createOscillator(), gn = a.createGain();
+    o.frequency.value = 880; o.connect(gn); gn.connect(a.destination); gn.gain.setValueAtTime(.2, a.currentTime); gn.gain.exponentialRampToValueAtTime(.001, a.currentTime + .5); o.start(); o.stop(a.currentTime + .5); } catch (e) { /* no sound */ }
+}
+function newDraft(dayId, past) {
+  const tr = trainCfg(), d = planDay(tr, dayId), ws = workouts();
+  return {
+    date: today(), dayId: d ? d.id : '', name: d ? d.name : 'Workout', started: Date.now(), past: !!past,
+    ex: (d ? d.ex : []).map(x => draftEx(x, ws)),
+  };
+}
+function draftEx(x, ws) {
+  const e = EX[x.id], last = lastFor(ws, x.name, x.reps, e && e.step);
+  const kg = last && last.tip && last.tip.kg ? last.tip.kg : last ? last.kg : '';
+  return { id: x.id || '', n: x.name, reps: x.reps, rest: Number(x.rest) || 90, s: Array.from({ length: Number(x.sets) || 3 }, () => [kg > 0 ? kg : '', '', 0]) };
+}
+function openWorkout(opt) {
+  let wo = opt.resume ? loadDraft() : null;
+  if (!wo) { wo = newDraft(opt.dayId, opt.past); saveDraft(wo); }
+  const ws = workouts();
+  const ov = h('div.ov.full');
+  const close = () => { clearInterval(tick); ov.remove(); render(); };
+  const store = () => saveDraft(wo);
+  const clock = h('span.num');
+  const timerBar = h('div.restbar', { hidden: true });
+  const startRest = secs => {
+    restTimer = { end: Date.now() + secs * 1000, total: secs };
+    paintTimer();
+  };
+  const paintTimer = () => {
+    if (!restTimer) { timerBar.hidden = true; return; }
+    const left = Math.max(0, Math.round((restTimer.end - Date.now()) / 1000));
+    timerBar.hidden = false;
+    timerBar.replaceChildren(h('div.grow', null, h('div.tiny.muted', null, 'REST'), h('div.big-num', null, fmtRest(left))),
+      h('button.btn.sm.ghost', { onclick: () => { restTimer.end -= 15000; paintTimer(); } }, '−15'),
+      h('button.btn.sm.ghost', { onclick: () => { restTimer.end += 15000; paintTimer(); } }, '+15'),
+      h('button.btn.sm', { onclick: () => { restTimer = null; paintTimer(); } }, 'Skip'),
+      h('i.fill', { style: 'width:' + (100 * left / restTimer.total).toFixed(1) + '%' }));
+    if (left === 0) { restTimer = null; beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { /* ignore */ } toast('Rest done. Next set!'); timerBar.hidden = true; }
+  };
+  const tick = setInterval(() => {
+    if (!ov.isConnected) return clearInterval(tick);
+    const m = Math.floor((Date.now() - wo.started) / 60000);
+    clock.textContent = wo.past ? '' : m + ' min';
+    if (restTimer) paintTimer();
+  }, 500);
+  const list = h('div');
+  const paint = () => list.replaceChildren(...wo.ex.map((x, xi) => {
+    const e = EX[x.id], last = lastFor(ws, x.n, x.reps, e && e.step), bw = e && e.e === 'b';
+    return h('section.excard', null,
+      h('div.row', null, h('div.grow', null, h('div.t1', null, x.n), h('div.small.muted', null, x.s.length + ' × ' + x.reps + (e && e.secs ? ' s' : '') + ' · rest ' + fmtRest(x.rest))),
+        h('button.icon', { 'aria-label': 'Remove exercise', onclick: () => { if (x.s.some(s => s[2]) && !confirm('Remove ' + x.n + '?')) return; wo.ex.splice(xi, 1); store(); paint(); } }, '✕')),
+      last ? h('div.small.last', null, 'Last time (' + shortDate(last.date) + '): ' + setsTxt(last.sets)) : h('div.small.last', null, 'First time: pick a weight you can lift for ' + x.reps + ' with 1–2 reps to spare.'),
+      last && last.tip ? h('div.small.tip', null, last.tip.text + (last.tip.kg ? kgTxt(last.tip.kg) + '.' : '')) : null,
+      h('div.sets', null, h('div.sh', null, h('span', null, 'Set'), h('span', null, bw ? '+kg' : 'kg'), h('span', null, e && e.secs ? 'sec' : 'reps'), h('span')),
+        x.s.map((s, si) => h('div.set' + (s[2] ? '.done' : ''), null,
+          h('span.n', null, si + 1),
+          h('input.in.sm', { inputmode: 'decimal', value: s[0], placeholder: bw ? 'BW' : 'kg', 'aria-label': 'Weight set ' + (si + 1), oninput: ev => { s[0] = ev.target.value; store(); } }),
+          h('input.in.sm', { inputmode: 'numeric', value: s[1], placeholder: String(x.reps).split('-').pop(), 'aria-label': 'Reps set ' + (si + 1), oninput: ev => { s[1] = ev.target.value; store(); } }),
+          h('button.tickbtn', { 'aria-label': 'Set done', onclick: () => {
+            if (!s[2] && !(Number(s[1]) > 0)) { s[1] = String(x.reps).split('-').pop(); }
+            s[2] = s[2] ? 0 : 1;
+            if (s[2]) { const nx = x.s[si + 1]; if (nx && nx[0] === '' && s[0] !== '') nx[0] = s[0]; if (!wo.past) startRest(x.rest); }
+            store(); paint();
+          } }, s[2] ? '✓' : '')))),
+      h('div.btns', null, h('button.btn.sm.ghost', { onclick: () => { const p = x.s[x.s.length - 1]; x.s.push([p ? p[0] : '', '', 0]); store(); paint(); } }, '+ Set'),
+        x.s.length > 1 ? h('button.btn.sm.ghost', { onclick: () => { x.s.pop(); store(); paint(); } }, '− Set') : null));
+  }), h('div.btns', null, h('button.btn.ghost.block', { onclick: () => pickExercise(x => { wo.ex.push(draftEx(x, ws)); store(); paint(); }) }, '+ Add exercise')));
+  paint();
+  const date = h('input.in.sm', { type: 'date', value: wo.date, max: today(), onchange: e => { wo.date = e.target.value; store(); } });
+  const mins = h('input.in.sm', { inputmode: 'numeric', placeholder: 'min', value: wo.min || '', oninput: e => { wo.min = e.target.value; store(); } });
+  const finish = async () => {
+    const ex = wo.ex.map(x => ({ n: x.n, s: x.s.filter(s => (s[2] || Number(s[1]) > 0) && Number(s[1]) > 0).map(s => [Math.max(0, Number(String(s[0]).replace(',', '.')) || 0), Math.round(Number(s[1]))]) })).filter(x => x.s.length);
+    if (!ex.length) { toast('Log at least one set first.'); return; }
+    if (!wo.date || wo.date > today()) { toast('That date isn\'t valid.'); return; }
+    const min = wo.past ? (Number(wo.min) || 0) : Math.max(1, Math.round((Date.now() - wo.started) / 60000));
+    const data = { day: wo.dayId, name: wo.name, ex, min: Math.min(min, 600) };
+    if (await act(() => api('logAdd', [{ date: wo.date, kind: 'workout', data }]), 'Workout saved: ' + ex.reduce((s, x) => s + x.s.length, 0) + ' sets')) {
+      saveDraft(null); restTimer = null; close();
+    }
+  };
+  ov.append(h('div.sheet.full', { role: 'dialog', 'aria-label': 'Workout' },
+    h('div.wohead', null, h('div.grow', null, h('h3', { style: 'margin:0' }, wo.name), h('div.small.muted', null, wo.past ? 'Logging a past workout' : 'In progress · ', clock)),
+      h('button.btn.sm.ghost', { onclick: () => { saveDraft(wo); close(); } }, 'Minimise')),
+    wo.past ? h('div.grid2', null, h('div', null, h('label.f', null, 'Date'), date), h('div', null, h('label.f', null, 'Duration (min)'), mins)) : null,
+    list,
+    h('div.btns', null, h('button.btn.gold.block', { onclick: finish }, 'Finish workout'),
+      h('button.btn.red.block', { onclick: () => { if (confirm('Discard this workout? Logged sets will be lost.')) { saveDraft(null); restTimer = null; close(); } } }, 'Discard')),
+    timerBar));
+  document.body.append(ov);
+}
+function openWorkoutDetail(w) {
+  modal(w.data.name, close => h('div', null,
+    h('div.small.muted', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + (w.data.min ? ' · ' + w.data.min + ' min' : '') + ' · ' + setCount(w) + ' sets · ' + Math.round(volume(w)).toLocaleString('en-US') + ' kg'),
+    h('div.list', null, (w.data.ex || []).map(x => h('div.item', null, h('div.grow', null, h('div.t1', null, x.n), h('div.t2', null, setsTxt(x.s)))))),
+    h('div.btns', null, h('button.btn.red', { onclick: async () => { if (!confirm('Delete this workout?')) return; if (await act(() => api('logDelete', w.id), 'Workout deleted')) close(); } }, 'Delete workout'))));
 }
 
 // ---------- service worker ----------

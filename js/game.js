@@ -2,6 +2,7 @@
 // state yang bisa "nyasar": edit transaksi lama → HP/XP ikut menyesuaikan.
 import { isFree, catLabel, addDays, daysBetween, cycleOf, cycleEnd, addMonthKey } from './fin.js';
 import { BOSSES } from './sprites.js';
+import { sessionOn, prsIn, wdOf } from './train.js';
 
 export const RULES = {
   hpMax: 100,
@@ -13,6 +14,7 @@ export const RULES = {
   streak: { every: 7, xp: 50, gold: 50 },
   boss: { ratio: 0.6, xp: 250, gold: 120, escapeHp: -10 },
   challenge: { xp: 200, gold: 100, acceptDays: 7, share: 0.2 },
+  gym: { xp: 25, gold: 10, hp: 5, prXp: 15, prMax: 3, missed: -8, weekXp: 60, weekGold: 30 },
   reviveDays: 3, reviveHp: 40, sick: 30, tired: 60,
 };
 
@@ -139,6 +141,17 @@ export function compute(data, game, today) {
   const pro = Object.keys(days).filter(d => d < start && (days[d].n > 0 || days[d].checkin)).length;
   if (pro) gain(addDays(start, -1), 'Prologue: ' + pro + ' days logged before the adventure began.', pro * 5, pro * 2, 0, 'prologue');
 
+  // Training: workouts by day (in the order they were logged) and excused rest days.
+  const train = game.train && game.train.plan ? game.train : null;
+  const wByDay = {}, restDays = new Set(), allW = [];
+  (data.journal || []).forEach(j => {
+    if (j.kind === 'workout') (wByDay[j.date] = wByDay[j.date] || []).push(j);
+    if (j.kind === 'rest') restDays.add(j.date);
+  });
+  Object.values(wByDay).forEach(l => l.sort((a, b) => a.createdAt - b.createdAt));
+  (data.journal || []).filter(j => j.kind === 'workout' && j.date < start).sort((a, b) => a.date < b.date ? -1 : 1).forEach(w => allW.push(w));
+  let pending = [], wk = { sched: 0, done: 0, miss: 0 };
+
   let prevKey = null;
   for (let d = start; d <= today; d = addDays(d, 1)) {
     const key = cycleOf(d, starts), c = C(key);
@@ -165,6 +178,26 @@ export function compute(data, game, today) {
       const Q = QUESTS[q];
       if ((closed || !Q.eod) && questDone(q, day, allowance)) gain(d, 'Quest complete: ' + Q.name, Q.xp, Q.gold, 0, 'quest');
     });
+
+    if (train) {
+      const sess = sessionOn(train, d);
+      if (sess && !restDays.has(d)) { pending.push({ date: d, name: sess.name }); wk.sched++; }
+      (wByDay[d] || []).forEach(w => {
+        const p = pending.shift();
+        const name = w.data.name || (p && p.name) || 'Workout';
+        gain(d, (p ? 'Workout done: ' : 'Bonus workout: ') + name, RULES.gym.xp, RULES.gym.gold, S.ko ? 0 : RULES.gym.hp, 'gym');
+        prsIn(w, allW).slice(0, RULES.gym.prMax).forEach(pr => gain(d, 'New PR: ' + pr.n + (pr.kg ? ' ' + pr.kg + ' kg × ' + pr.reps : ' ' + pr.reps + ' reps'), RULES.gym.prXp, 0, 0, 'pr'));
+        allW.push(w); wk.done++;
+      });
+      if (closed) {
+        pending.filter(x => x.date < d).forEach(x => { gain(d, 'Skipped ' + x.name + ' (' + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][wdOf(x.date)] + '). HP lost.', 0, 0, RULES.gym.missed, 'gymmiss'); wk.miss++; });
+        pending = pending.filter(x => x.date >= d);
+        if (wdOf(d) === 6) {
+          if (wk.sched > 0 && !wk.miss && wk.done >= wk.sched) gain(d, 'Gym week cleared: every session done.', RULES.gym.weekXp, RULES.gym.weekGold, 0, 'gymweek');
+          wk = { sched: 0, done: 0, miss: 0 };
+        }
+      }
+    }
     if (!closed) continue;
 
     if (!logged) { gain(d, 'Missed a day of logging. HP stolen.', 0, 0, RULES.missed.hp, 'miss'); S.streak = 0; S.koGood = 0; continue; }
@@ -220,5 +253,6 @@ export function compute(data, game, today) {
     challenges: { accepted: accepted.map(a => ({ ...a.data, id: a.id, used: cur.used[a.data.cat] || 0 })), offers, open: chOpen, partial: !!(cur.budget && cur.budget.partial) },
     lastCycles: Object.values(cyc).filter(c => c.done).map(c => ({ key: c.key, result: c.result, hits: c.hits, max: c.maxHits })),
     prevKey: addMonthKey(curKey, -1),
+    gym: { pending: pending.slice(), week: wk },
   };
 }

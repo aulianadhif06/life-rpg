@@ -64,6 +64,7 @@ export const ICONS = {
   bolt: ['....yy..', '...yy...', '..yy....', '.yyyyyy.', '....yy..', '...yy...', '..yy....', '.y......'],
   check: ['........', '.......l', '......ll', 'l....ll.', 'll..ll..', '.llll...', '..ll....', '........'],
   box: ['kkkkkkkk', 'k......k', 'k......k', 'k......k', 'k......k', 'k......k', 'k......k', 'kkkkkkkk'],
+  dumbbell: ['........', 'kk....kk', 'kgk..kgk', 'kgwwwwgk', 'kgGGGGgk', 'kgk..kgk', 'kk....kk', '........'],
   gear: ['...gg...', '.gggggg.', '.gg..gg.', 'gg....gg', 'gg....gg', '.gg..gg.', '.gggggg.', '...gg...'],
 };
 
