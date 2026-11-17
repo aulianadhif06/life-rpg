@@ -2,7 +2,7 @@ import { api, auth, cached } from './api.js';
 import { CONNECT_URL } from './config.js';
 import { compute, RULES } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
-import { avatarCanvas, avatarOf, DEFAULT_AVATAR, ITEMS, SKIN_TONES, HAIR_COLORS, EYE_COLORS, CLOTH_COLORS, swatch } from './lpc.js';
+import { avatarCanvas, avatarOf, DEFAULT_AVATAR, HAIRS, TOPS, BOTTOMS, SKIN_TONES, HAIR_COLORS, swatch } from './hero.js';
 import {
   EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
   cycleName, MONTHS, DAYS, balances, worth, netWorth, goalProgress, catLabel,
@@ -99,7 +99,7 @@ async function boot() {
   if (!auth.key) return renderPair();
   const c = cached();
   if (c) { S.data = c; recompute(false); render(); }
-  else document.body.replaceChildren(h('div.pair', null, avatarCanvas(DEFAULT_AVATAR, 'ok', 4), h('h1', null, 'LIFE RPG'), h('p.muted', null, 'Loading your world…')));
+  else document.body.replaceChildren(h('div.pair', null, avatarCanvas(DEFAULT_AVATAR, 'ok', 3), h('h1', null, 'LIFE RPG'), h('p.muted', null, 'Loading your world…')));
   await refresh(!!c);
 }
 async function refresh(quiet) {
@@ -125,7 +125,7 @@ function renderPair(msg) {
     catch (e) { auth.clear(); err.textContent = e.message; }
   };
   document.body.replaceChildren(h('div.pair', null,
-    avatarCanvas(DEFAULT_AVATAR, 'ok', 4), h('h1', null, 'LIFE RPG'),
+    avatarCanvas(DEFAULT_AVATAR, 'ok', 3), h('h1', null, 'LIFE RPG'),
     h('p.muted', null, 'Your money and health, played as an adventure.'),
     h('div.btns', null, h('button.btn.gold.block', { onclick: () => { location.href = CONNECT_URL; } }, 'CONTINUE WITH GOOGLE')),
     err,
@@ -184,7 +184,7 @@ function speech() {
 }
 function viewHome() {
   const g = S.g, cfg = gameCfg(), t = g.today;
-  const scene = h('section.panel.scene', null, h('div.stage', null, h('div.stars'), avatarCanvas(avatarOf(cfg), g.status, 3), h('button.btn.sm.ghost.edit', { onclick: openWardrobe }, 'Customize')),
+  const scene = h('section.panel.scene', null, h('div.stage', null, h('div.stars'), avatarCanvas(avatarOf(cfg), g.status, 2), h('button.btn.sm.ghost.edit', { onclick: openWardrobe }, 'Customize')),
     h('div.hero-name', null, cfg.name || 'Hero', h('span.status-chip.' + g.status, null, STATUS_TXT[g.status])),
     h('div.small.muted', null, 'Lv ' + g.level + ' · ' + g.title + ' · ' + g.streak + '-day streak'),
     h('div.bubble', null, speech()));
@@ -509,7 +509,7 @@ function openSettings() {
         const s = Math.max(0, Math.min(50, Number(share.value) || 0)) / 100;
         if (await saveGame({ name: name.value.trim() || 'Hero', share: s })) close();
       } }, 'Save')),
-      h('p.small.muted', { style: 'margin-top:18px' }, h('a', { href: 'https://github.com/aulianadhif06/life-rpg/blob/main/CREDITS.md', target: '_blank', rel: 'noopener', style: 'color:inherit' }, 'Character art credits (LPC artists)')),
+      h('p.small.muted', { style: 'margin-top:18px' }, h('a', { href: 'https://github.com/aulianadhif06/life-rpg/blob/main/CREDITS.md', target: '_blank', rel: 'noopener', style: 'color:inherit' }, 'Art credits')),
       h('p.small.muted', null, 'Adventure started ' + shortDate(S.g.start) + ' ' + S.g.start.slice(0, 4) + '. Your data lives in your Google Sheet; this device only keeps a copy.'),
       h('div.btns', null,
         h('button.btn.ghost', { onclick: () => { close(); refresh(true); } }, 'Refresh data'),
@@ -517,7 +517,7 @@ function openSettings() {
   });
 }
 function showLevelUp(lvl) {
-  modal('', close => h('div.lvlup', null, h('div.big', null, 'LEVEL UP!'), h('div', { style: 'display:flex;justify-content:center;margin:14px 0' }, avatarCanvas(avatarOf(gameCfg()), 'happy', 4)),
+  modal('', close => h('div.lvlup', null, h('div.big', null, 'LEVEL UP!'), h('div', { style: 'display:flex;justify-content:center;margin:14px 0' }, avatarCanvas(avatarOf(gameCfg()), 'happy', 3)),
     h('p', null, 'You\'re now Lv ' + lvl + ' · ' + S.g.title),
     unlockedAt(lvl).length ? h('p.gold', null, 'Unlocked: ' + unlockedAt(lvl).join(', ')) : null,
     h('button.btn.gold', { onclick: close }, 'NICE')));
@@ -526,14 +526,12 @@ function showLevelUp(lvl) {
 // ---------- wardrobe ----------
 // Gold spent on clothes is tracked in the game settings. (spent2/owned2: the earlier hand-drawn wardrobe is retired and refunded.)
 const goldLeft = () => Math.max(0, S.g.gold - (Number(gameCfg().spent2) || 0));
-const UNLOCKS = { 'cape:cape': { lvl: 10 }, 'top:cardigan': { gold: 50 }, 'top:buttoned': { gold: 50 }, 'neck:tie': { gold: 40 }, 'neck:scarf': { gold: 60 }, 'feet:tallboots': { gold: 60 } };
-const KIND_NAME = { top: 'top', legs: 'bottom', feet: 'shoes', cape: 'cape', neck: 'neckwear', hair: 'hair' };
+const UNLOCKS = { 'top:stringer': { lvl: 3 }, 'hair:knot': { lvl: 5 }, 'top:coat': { lvl: 8 }, 'top:vest': { gold: 40 }, 'top:track': { gold: 50 }, 'top:hoodie': { gold: 30 }, 'bottom:chinos': { gold: 30 } };
+const KIND_NAME = { top: 'top', bottom: 'bottom', hair: 'hair' };
 const pretty = k => k.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-const ITEM_NAMES = { tshirt: 'T-shirt', vneck: 'V-neck', polo: 'Polo', longsleeve: 'Long sleeve', cardigan: 'Cardigan', tank: 'Tank top', buttoned: 'Button-up',
-  pants: 'Pants', cuffed: 'Cuffed pants', shorts: 'Shorts', skirt: 'Skirt', shoes: 'Shoes', sneakers: 'Sneakers', boots: 'Boots', tallboots: 'Tall boots',
-  messy: 'Messy', bedhead: 'Bedhead', parted: 'Parted', swoop: 'Swoop', spiked: 'Spiked', buzzcut: 'Buzz cut', curly: 'Curly', afro: 'Afro', bob: 'Bob', pixie: 'Pixie',
-  ponytail: 'Ponytail', long: 'Long', wavy: 'Wavy', bun: 'Top knot', mop: 'Mop', flattop: 'Flat top', stubble: 'Stubble', trimmed: 'Beard', mustache: 'Mustache',
-  thin: 'Thin', thick: 'Thick', cape: 'Cape', scarf: 'Scarf', tie: 'Tie', none: 'None' };
+const ITEM_NAMES = { messy: 'Messy', side: 'Side part', buzz: 'Buzz cut', long: 'Long', pony: 'Ponytail', curly: 'Curly', bob: 'Bob', knot: 'Top knot',
+  tee: 'T-shirt', tank: 'Tank top', hoodie: 'Hoodie', shirt: 'Button-up', vest: 'Sweater vest', coat: 'Long coat', track: 'Track jacket', stringer: 'Gym stringer',
+  joggers: 'Joggers', jeans: 'Jeans', shorts: 'Shorts', chinos: 'Chinos & boots', skirt: 'Skirt', natural: 'Natural' };
 function unlockedAt(lvl) {
   return Object.entries(UNLOCKS).filter(([, u]) => u.lvl === lvl).map(([k]) => (ITEM_NAMES[k.split(':')[1]] || k) + ' (' + KIND_NAME[k.split(':')[0]] + ')');
 }
@@ -556,8 +554,8 @@ function openWardrobe() {
     let tab = 'look';
     const tabs = h('div.tabs');
     const paint = () => {
-      prev.replaceChildren(avatarCanvas(draft, 'ok', 4));
-      tabs.replaceChildren(...[['look', 'Look'], ['clothes', 'Clothes'], ['extras', 'Extras']].map(([k, l]) => h('button' + (tab === k ? '.on' : ''), { type: 'button', onclick: () => { tab = k; paint(); } }, l)));
+      prev.replaceChildren(avatarCanvas(draft, 'ok', 2.5));
+      tabs.replaceChildren(...[['look', 'Look'], ['clothes', 'Clothes']].map(([k, l]) => h('button' + (tab === k ? '.on' : ''), { type: 'button', onclick: () => { tab = k; paint(); } }, l)));
       body.replaceChildren(...sections());
       const c = cost();
       saveBtn.textContent = c ? 'Buy & save · ' + c + 'G' : 'Save look';
@@ -572,26 +570,17 @@ function openWardrobe() {
         draft[field] = k; paint();
       } }, ITEM_NAMES[k] || pretty(k), lock ? h('span.lock', null, ' · ' + lock.text) : null);
     }));
-    const swatches = (field, mat, keys) => h('div.swatches', null, keys.map(k => h('button' + (draft[field] === k ? '.on' : ''), {
-      type: 'button', style: 'background:' + swatch(mat, k), title: pretty(k), 'aria-label': pretty(k), onclick: () => { draft[field] = k; paint(); } })));
+    const swatches = (field, kind, keys) => h('div.swatches', null, keys.map(k => h('button' + (draft[field] === k ? '.on' : ''), {
+      type: 'button', style: 'background:' + swatch(kind, k), title: ITEM_NAMES[k] || pretty(k), 'aria-label': ITEM_NAMES[k] || pretty(k), onclick: () => { draft[field] = k; paint(); } })));
     const sec = (title, ...kids) => h('div.wsec', null, h('div.wlab', null, title), ...kids);
-    const names = slot => Object.keys(ITEMS[slot]);
     const sections = () => tab === 'look' ? [
-      sec('Body', chips('body', ['male', 'female'].map(x => x), 'body')),
-      sec('Skin tone', swatches('skin', 'body', SKIN_TONES)),
-      sec('Eye colour', swatches('eyes', 'eye', EYE_COLORS)),
-      sec('Hair', chips('hair', names('hair'), 'hair'), swatches('hairColor', 'hair', HAIR_COLORS)),
-      sec('Eyebrows', chips('brows', names('brows'), 'brows')),
-      draft.body === 'male' ? sec('Facial hair', chips('beard', ['none', ...names('beard')], 'beard')) : null,
-    ] : tab === 'clothes' ? [
-      sec('Top', chips('top', names('top'), 'top'), swatches('topColor', 'cloth', CLOTH_COLORS)),
-      sec('Bottom', chips('legs', names('legs'), 'legs'), swatches('legsColor', 'cloth', CLOTH_COLORS)),
-      sec('Shoes', chips('feet', names('feet'), 'feet'), swatches('feetColor', 'cloth', CLOTH_COLORS)),
+      sec('Skin tone', swatches('skin', 'skin', SKIN_TONES)),
+      sec('Hairstyle', chips('hair', HAIRS, 'hair')),
+      sec('Hair colour', swatches('hairColor', 'hair', HAIR_COLORS)),
     ] : [
-      sec('Cape', chips('cape', ['none', ...names('cape')], 'cape'), draft.cape !== 'none' ? swatches('capeColor', 'cloth', CLOTH_COLORS) : null),
-      sec('Neckwear', chips('neck', ['none', ...names('neck')], 'neck'), draft.neck !== 'none' ? swatches('neckColor', 'cloth', CLOTH_COLORS) : null),
+      sec('Top', chips('top', TOPS, 'top')),
+      sec('Bottom', chips('bottom', BOTTOMS, 'bottom')),
     ];
-    ITEM_NAMES.male = 'Masculine'; ITEM_NAMES.female = 'Feminine';
     saveBtn.onclick = async () => {
       const c = cost();
       if (c > goldLeft()) return;

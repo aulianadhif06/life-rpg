@@ -72,7 +72,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .scene .stage::before { content: ''; position: absolute; left: 0; right: 0; bottom: 26%; height: 4px; background: var(--l); }
 .scene .stage .hero { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); }
 .scene .stage .edit { position: absolute; right: 12px; top: 12px; font-size: 12px; }
-.wardrobe-prev { display: flex; justify-content: center; background: linear-gradient(var(--b) 0 80%, #2d6e45 80%); padding: 10px 0 0; margin: -16px -16px 12px; position: sticky; top: -16px; z-index: 2; border-bottom: 4px solid var(--k); }
+.wardrobe-prev { display: flex; justify-content: center; background: linear-gradient(var(--b) 0 80%, #2d6e45 80%); padding: 10px 0 14px; margin: -16px -16px 12px; position: sticky; top: -16px; z-index: 2; border-bottom: 4px solid var(--k); }
 .wsec { margin: 16px 0; } .wlab { font-size: 13px; color: var(--g); margin-bottom: 6px; }
 .chips button.locked { opacity: .55; } .lock { font-size: 11px; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
