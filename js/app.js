@@ -900,7 +900,7 @@ function viewFood() {
     ] : h('div.callout', null, h('b', null, 'Add your body stats first'), h('div.small', null, 'Height, age and weight set your daily protein and calorie targets.'),
       h('div.btns', null, h('button.btn.sm', { onclick: openBodySetup }, 'Add body stats'))),
     h('div.btns', null, h('button.btn.gold', { onclick: () => openMeal({ date: d }) }, '+ Add meal'),
-      h('button.btn.ghost', { onclick: () => S.data.scanEnabled ? snapFood(d) : toast('Photo logging needs GEMINI_API_KEY in Script Properties.', 4000) }, 'Snap a photo')));
+      h('button.btn.ghost', { onclick: () => (S.data.foodAi || S.data.scanEnabled) ? snapFood(d) : toast('Photo logging needs ANTHROPIC_API_KEY in Script Properties.', 4000) }, 'Snap a photo')));
   const listP = panel('Meals', meals.length ? meals.length + '' : '', meals.length ? MEAL_SLOTS.map(([k, l]) => {
     const xs = meals.filter(m => (m.data.slot || 'snack') === k);
     return xs.length ? [h('div.glab', null, l), h('div.list', null, xs.map(m => h('div.item', null, h('div.grow', null, h('div.t1', null, m.data.name), h('div.t2', null, Math.round(m.data.kcal || 0) + ' kcal · ' + Math.round(m.data.p || 0) + ' g protein' + (m.data.src === 'photo' ? ' · from photo' : ''))),
@@ -921,7 +921,7 @@ function resizeImage(file, max = 1024) {
 const FOOD_PROMPT = ['You estimate nutrition from a meal photo for a fitness app used in Indonesia.',
   'Identify each food on the plate with a realistic portion size, then estimate calories and protein. Use typical Indonesian recipes and portions where relevant (e.g. nasi putih 1 piring ≈ 200 g ≈ 260 kcal).',
   'If the photo is not food, return an empty items list. Be conservative and do not invent hidden items.',
-  'Reply ONLY with JSON: {"items":[{"name":"short name in the language usually used for it","portion":"e.g. 1 piring / 150 g","kcal":number,"protein_g":number}],"confidence":"low|medium|high","note":"one short sentence about what is uncertain"}'].join('\n');
+  'Reply ONLY with JSON, no other text: {"items":[{"name":"short name in the language usually used for it","portion":"e.g. 1 piring / 150 g","kcal":number,"protein_g":number}],"confidence":"low|medium|high","note":"one short sentence about what is uncertain"}'].join('\n');
 function snapFood(date) {
   const inp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
   inp.addEventListener('change', async () => {
@@ -930,7 +930,7 @@ function snapFood(date) {
     document.body.classList.add('busy'); toast('Reading your meal…', 8000);
     try {
       const img = await resizeImage(f);
-      const r = await api('scanDocument', { prompt: FOOD_PROMPT, images: [img] });
+      const r = S.data.foodAi ? await api('foodScan', { prompt: FOOD_PROMPT, image: img }) : await api('scanDocument', { prompt: FOOD_PROMPT, images: [img] });
       const items = (r && r.items || []).filter(x => x && x.name);
       if (!items.length) { toast('No food found in that photo. Try again or add it by hand.', 4000); return; }
       openMeal({ date, photo: { items, confidence: r.confidence || 'medium', note: r.note || '' } });
@@ -966,7 +966,7 @@ function openMeal(pre) {
     q.addEventListener('input', paintPicks);
     paintSlots(); paintPicks();
     return h('div', null, slots,
-      ph ? h('div.callout', { style: 'margin-top:10px' }, h('b', null, 'Estimated from your photo (' + ph.confidence + ' confidence)'),
+      ph ? h('div.callout', { style: 'margin-top:10px' }, h('b', null, 'Estimated by ' + (S.data.foodAi === 'claude' ? 'Claude' : 'AI') + ' from your photo (' + ph.confidence + ' confidence)'),
         h('div.small', null, ph.items.map(x => x.name + (x.portion ? ' (' + x.portion + ')' : '') + ': ' + Math.round(x.kcal || 0) + ' kcal, ' + Math.round(x.protein_g || 0) + ' g').join(' · ')),
         ph.note ? h('div.small.muted', null, ph.note) : null, h('div.small.muted', null, 'Check the numbers and fix anything that looks off before saving.'))
         : [h('label.f', null, 'Quick pick'), q, picks],
