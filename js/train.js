@@ -110,14 +110,19 @@ export function schedOn(train, date) {
   for (const s of h) if (s.from <= date) cur = s;
   return cur ? cur.map : null;
 }
-export function sessionOn(train, date) {
+/** All sessions scheduled on a date (a weekday can hold several, e.g. gym + padel). */
+export function sessionsOn(train, date) {
   const m = schedOn(train, date);
-  if (!m) return null;
-  const id = m[wdOf(date)];
-  if (!id) return null;
-  const d = train.plan && train.plan.days.find(x => x.id === id);
-  return d ? { id, name: d.name } : { id, name: 'Session ' + id };
+  if (!m) return [];
+  const v = m[wdOf(date)];
+  const ids = Array.isArray(v) ? v : v ? [v] : [];
+  return ids.map(id => {
+    const d = train.plan && train.plan.days.find(x => x.id === id);
+    return d ? { id, name: d.name, type: d.type || 'gym', sport: d.sport || '', min: d.min || 0 } : null;
+  }).filter(Boolean);
 }
+export const sessionOn = (train, date) => sessionsOn(train, date)[0] || null;
+export const schedIds = (map, wd) => { const v = map && map[wd]; return Array.isArray(v) ? v : v ? [v] : []; };
 
 // ---------- workout statistics ----------
 export const e1rm = (w, r) => (w > 0 ? w * (1 + Math.min(r, 15) / 30) : 0);
@@ -167,3 +172,65 @@ export const volume = w => (w.data.ex || []).reduce((s, ex) => s + setsOf(ex).re
 export const setCount = w => (w.data.ex || []).reduce((s, ex) => s + setsOf(ex).length, 0);
 export const weekStart = date => addDays(date, -wdOf(date));
 export const fmtRest = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+
+// ---------- sports & cardio ----------
+// met = rough energy cost (Compendium of Physical Activities ballpark) for calorie estimates.
+export const SPORTS = {
+  run: { name: 'Run', met: 9.8, dist: true }, walk: { name: 'Walk', met: 3.5, dist: true }, cycle: { name: 'Cycling', met: 7.5, dist: true },
+  swim: { name: 'Swim', met: 7, dist: true }, padel: { name: 'Padel', met: 7 }, basketball: { name: 'Basketball', met: 7.5 },
+  football: { name: 'Football', met: 8 }, futsal: { name: 'Futsal', met: 8.5 }, badminton: { name: 'Badminton', met: 5.5 },
+  tennis: { name: 'Tennis', met: 7.3 }, hiit: { name: 'HIIT / circuit', met: 8 }, yoga: { name: 'Yoga / mobility', met: 2.8 },
+  other: { name: 'Other sport', met: 6 },
+};
+// Garmin activityType.typeKey → our sport key
+export const GARMIN_SPORT = {
+  running: 'run', treadmill_running: 'run', trail_running: 'run', track_running: 'run', indoor_running: 'run',
+  walking: 'walk', hiking: 'walk', casual_walking: 'walk', speed_walking: 'walk',
+  cycling: 'cycle', road_biking: 'cycle', indoor_cycling: 'cycle', mountain_biking: 'cycle', virtual_ride: 'cycle',
+  lap_swimming: 'swim', open_water_swimming: 'swim', swimming: 'swim',
+  padel: 'padel', basketball: 'basketball', soccer: 'football', football: 'football', futsal: 'futsal', badminton: 'badminton',
+  tennis: 'tennis', hiit: 'hiit', cardio: 'hiit', yoga: 'yoga', pilates: 'yoga', breathwork: 'yoga',
+  strength_training: 'gym', indoor_cardio: 'hiit',
+};
+export const EFFORT = [['easy', 'Easy', 0.8], ['moderate', 'Moderate', 1], ['hard', 'Hard', 1.2]];
+export const sportKcal = (sport, min, kg, effort) => {
+  const s = SPORTS[sport] || SPORTS.other, f = (EFFORT.find(e => e[0] === effort) || EFFORT[1])[2];
+  return Math.round(s.met * f * (kg || 70) * (min || 0) / 60);
+};
+export const isSport = w => w && w.data && w.data.type === 'sport';
+
+// ---------- nutrition targets ----------
+// Mifflin-St Jeor BMR × activity factor, plus a small surplus for lean gain; protein 1.8 g per kg.
+export const ACTIVITY = [['light', 'Light (1–2 sessions/week)', 1.375], ['moderate', 'Moderate (3–5/week)', 1.55], ['high', 'High (6+/week or physical job)', 1.725]];
+export const GOALS = [['gain', 'Lean muscle gain', 250], ['maintain', 'Maintain / recomp', 0], ['cut', 'Lose fat', -400]];
+export function targets(body, weightKg) {
+  const b = body || {};
+  const w = weightKg || Number(b.weight) || 0, hgt = Number(b.height) || 0, age = Number(b.age) || 0;
+  if (!w || !hgt || !age) return null;
+  const bmr = 10 * w + 6.25 * hgt - 5 * age + (b.sex === 'female' ? -161 : 5);
+  const act = (ACTIVITY.find(a => a[0] === b.activity) || ACTIVITY[1])[2];
+  const goal = (GOALS.find(g => g[0] === b.goal) || GOALS[0])[2];
+  const kcal = Math.round((bmr * act + goal) / 10) * 10;
+  return { kcal, protein: Math.round(w * (b.goal === 'cut' ? 2.0 : 1.8)), bmr: Math.round(bmr), weight: w };
+}
+/** 7-day average of the weight log ending at a date (journal entries kind 'weight'). */
+export function weightAvg(journal, date) {
+  const from = addDays(date, -6);
+  const xs = (journal || []).filter(j => j.kind === 'weight' && j.date >= from && j.date <= date && j.data.kg > 0).map(j => Number(j.data.kg));
+  return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length * 10) / 10 : null;
+}
+export function latestWeight(journal, date) {
+  const xs = (journal || []).filter(j => j.kind === 'weight' && j.date <= date && j.data.kg > 0).sort((a, b) => a.date < b.date ? 1 : -1);
+  return xs.length ? Number(xs[0].data.kg) : null;
+}
+
+// Common Indonesian & gym foods, per typical portion. Estimates only.
+export const FOODS = [
+  ['Nasi putih (1 piring, 200 g)', 260, 5], ['Nasi merah (1 piring)', 220, 5], ['Ayam goreng paha (1 potong)', 260, 22], ['Ayam bakar (1 potong)', 220, 25],
+  ['Dada ayam rebus/panggang (100 g)', 165, 31], ['Telur rebus (1 butir)', 75, 6], ['Telur dadar (1 butir)', 110, 7], ['Tempe goreng (2 potong)', 150, 9],
+  ['Tahu goreng (2 potong)', 120, 8], ['Ikan bakar (1 ekor sedang)', 220, 34], ['Rendang (1 potong)', 290, 21], ['Sate ayam (10 tusuk + bumbu)', 400, 30],
+  ['Nasi goreng (1 piring)', 600, 18], ['Mie goreng instan (1 bungkus)', 380, 8], ['Mie ayam (1 mangkok)', 450, 18], ['Bakso (1 mangkok)', 400, 20],
+  ['Soto ayam (1 mangkok, tanpa nasi)', 250, 20], ['Gado-gado (1 porsi)', 400, 15], ['Nasi Padang lengkap (rendang/ayam)', 800, 32], ['Ketoprak (1 porsi)', 450, 14],
+  ['Whey protein (1 scoop)', 120, 24], ['Susu UHT (250 ml)', 150, 8], ['Greek yogurt (150 g)', 130, 15], ['Oatmeal (40 g kering)', 150, 5],
+  ['Pisang (1 buah)', 105, 1], ['Roti tawar (2 lembar)', 140, 5], ['Selai kacang (1 sdm)', 95, 4], ['Kopi susu gula aren (1 gelas)', 220, 4],
+];

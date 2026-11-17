@@ -3,7 +3,7 @@ import { CONNECT_URL } from './config.js';
 import { lockOn, lockState, lockSupported, enableLock, unlock, disableLock, wipeLock, relock, RELOCK_MS } from './lock.js';
 import { compute, RULES } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
-import { EX, WEEKDAYS, SPLIT_TXT, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
+import { EX, WEEKDAYS, SPLIT_TXT, SPORTS, EFFORT, FOODS, ACTIVITY, GOALS, sportKcal, isSport, targets, weightAvg, latestWeight, sessionsOn, schedIds, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
 import { avatarCanvas, avatarOf, DEFAULT_AVATAR, HAIRS, TOPS, BOTTOMS, SKIN_TONES, HAIR_COLORS, swatch } from './hero.js';
 import {
   EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
@@ -43,7 +43,7 @@ function floatText(text, color, i = 0) {
 
 // ---------- state ----------
 const S = { locked: false, data: null, g: null, view: 'home', calMonth: null, calSel: null, busy: false, txSel: null };
-const VIEWS = [['home', 'Home', 'sword'], ['jurnal', 'Journal', 'star'], ['add', '', ''], ['train', 'Train', 'dumbbell'], ['arena', 'Budget', 'shield'], ['harta', 'Vault', 'chest']];
+const VIEWS = [['home', 'Home', 'sword'], ['jurnal', 'Journal', 'star'], ['add', '', ''], ['train', 'Health', 'dumbbell'], ['arena', 'Budget', 'shield'], ['harta', 'Vault', 'chest']];
 const LAST = 'lrpg.last';
 
 const today = () => todayLocal();
@@ -147,6 +147,7 @@ async function refresh(quiet) {
   if (!ok) return;
   if (!gameCfg().start) await saveGame({ start: today(), name: gameCfg().name || 'Hero' });
   checkLevelUp();
+  syncGarmin(false);
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') { lastHidden = Date.now(); return; }
@@ -179,7 +180,7 @@ function renderPair(msg) {
 function render() {
   if (S.locked || !S.data || !S.g) return;
   const y = window.scrollY;
-  const views = { home: viewHome, jurnal: viewJurnal, train: viewTrain, arena: viewArena, harta: viewHarta };
+  const views = { home: viewHome, jurnal: viewJurnal, train: viewHealth, arena: viewArena, harta: viewHarta };
   document.body.replaceChildren(hud(), h('main', null, views[S.view]()), nav());
   window.scrollTo(0, y);
 }
@@ -271,10 +272,13 @@ function viewHome() {
   const tr = trainCfg();
   let gymP = null;
   if (tr && tr.plan) {
-    const sess = sessionOn(tr, t.date), done = workouts().some(w => w.date === t.date), late = (g.gym.pending || []).filter(p => p.date < t.date);
-    if (late.length && !done) gymP = panel('Gym', 'make-up day', h('p.small', null, 'You missed ' + late[0].name + '. Do it today or lose ' + (-RULES.gym.missed) + ' HP at midnight.'), h('div.btns', null, h('button.btn.gold', { onclick: () => go('train') }, 'Go to training')));
-    else if (sess && !done && !restOn(t.date)) gymP = panel('Gym', 'today', h('div.row', null, iconCanvas('dumbbell', 3), h('div.grow', null, h('div.t1', null, sess.name), h('div.small.muted', null, 'Scheduled for today. +' + RULES.gym.xp + ' XP when you finish.'))),
-      h('div.btns', null, h('button.btn.gold', { onclick: () => openWorkout(loadDraft() ? { resume: true } : { dayId: sess.id }) }, loadDraft() ? 'Resume workout' : 'Start workout')));
+    const doneK = workouts().filter(w => w.date === t.date).map(w => isSport(w) ? 'sport' : 'gym');
+    const todo = (restOn(t.date) ? [] : sessionsOn(tr, t.date)).filter(x => { const k = doneK.indexOf(x.type); if (k >= 0) { doneK.splice(k, 1); return false; } return true; });
+    const late = (g.gym.pending || []).filter(p => p.date < t.date);
+    if (late.length) gymP = panel('Training', 'make-up day', h('p.small', null, 'You missed ' + late.map(x => x.name).join(', ') + '. Do it today or lose ' + (-RULES.gym.missed) + ' HP at midnight.'), h('div.btns', null, h('button.btn.gold', { onclick: () => { S.hTab = 'train'; go('train'); } }, 'Go to training')));
+    else if (todo.length) gymP = panel('Training', 'today', todo.map(x => h('div.row', { style: 'margin-bottom:8px' }, iconCanvas(x.type === 'sport' ? 'bolt' : 'dumbbell', 3), h('div.grow', null, h('div.t1', null, x.name), h('div.small.muted', null, '+' + RULES.gym.xp + ' XP when you finish.')),
+      x.type === 'sport' ? h('button.btn.sm.gold', { onclick: () => openActivity({ sport: x.sport, min: x.min, name: x.name }) }, 'Log')
+        : h('button.btn.sm.gold', { onclick: () => openWorkout(loadDraft() ? { resume: true } : { dayId: x.id }) }, loadDraft() ? 'Resume' : 'Start'))));
   }
   return h('div', null, scene, todayP, gymP, missP, questP, bossP, logP);
 }
@@ -558,13 +562,48 @@ function openSettings() {
         const s = Math.max(0, Math.min(50, Number(share.value) || 0)) / 100;
         if (await saveGame({ name: name.value.trim() || 'Hero', share: s })) close();
       } }, 'Save')),
-      lockBox(),
+      lockBox(), garminBox(close),
       h('p.small.muted', { style: 'margin-top:18px' }, h('a', { href: 'https://github.com/aulianadhif06/life-rpg/blob/main/CREDITS.md', target: '_blank', rel: 'noopener', style: 'color:inherit' }, 'Art credits')),
       h('p.small.muted', null, 'Adventure started ' + shortDate(S.g.start) + ' ' + S.g.start.slice(0, 4) + '. Your data lives in your Google Sheet; this device only keeps a copy.'),
       h('div.btns', null,
         h('button.btn.ghost', { onclick: () => { close(); refresh(true); } }, 'Refresh data'),
         h('button.btn.red', { onclick: () => { if (confirm('Sign out on this device?')) { auth.clear(); wipeLock(); location.reload(); } } }, 'Sign out')));
   });
+}
+const GARMIN_KEY_URL = 'https://connect.garmin.com/app/settings/personalApiToken';
+function garminBox(closeSettings) {
+  const gm = S.data.garmin;
+  const box = h('div.wsec', { style: 'margin-top:18px' }, h('div.wlab', null, 'Garmin'));
+  if (!gm) return box.append(h('p.small.muted', null, 'Garmin sync needs the latest Google script update.')), box;
+  if (!gm.keySet) {
+    box.append(h('p.small.muted', null, 'Not connected. Pull runs, padel and other activities plus steps, sleep and Body Battery from your watch:'),
+      h('ol.small.muted.steps', null,
+        h('li', null, 'Open ', h('a', { href: GARMIN_KEY_URL, target: '_blank', rel: 'noopener', style: 'color:var(--c)' }, 'Garmin Connect → Personal API Key'), ', sign in, tap Create Key, choose 1 year, and copy the key.'),
+        h('li', null, 'In your Apps Script project: Project Settings → Script Properties → add GARMIN_API_KEY and paste the key.'),
+        h('li', null, 'Come back here and tap Sync now.')),
+      h('div.btns', null, h('button.btn.sm', { onclick: () => { closeSettings(); syncGarmin(true, 30); } }, 'Sync now')));
+  } else {
+    box.append(h('p.small.muted', null, gm.error ? '⚠ Last sync failed: ' + gm.error : gm.last ? 'Connected. Last sync ' + new Date(gm.last).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) + '. Syncs automatically when you open the app (at most hourly).' : 'Key saved. Tap Sync now for the first sync.'),
+      h('div.btns', null, h('button.btn.sm', { onclick: () => { closeSettings(); syncGarmin(true, gm.last ? 7 : 30); } }, 'Sync now')));
+  }
+  return box;
+}
+let garminBusy = false;
+async function syncGarmin(manual, days = 7) {
+  const gm = S.data && S.data.garmin;
+  if (garminBusy || !gm || (!gm.keySet && !manual)) return;
+  if (!manual && gm.last && Date.now() - new Date(gm.last).getTime() < 3600e3) return;
+  if (!manual && gm.error && /menolak|GARMIN_API_KEY/.test(gm.error)) return;
+  garminBusy = true;
+  try {
+    const before = workouts().length;
+    const d = await api('garminSync', days);
+    if (d && d.txns) { S.data = d; recompute(true); render(); }
+    const added = workouts().length - before;
+    if (manual || added) toast(added ? 'Garmin: ' + added + ' new activit' + (added === 1 ? 'y' : 'ies') : 'Garmin is up to date');
+  } catch (e) {
+    if (manual) toast('⚠ Garmin: ' + (/tidak dikenal/.test(e.message) ? 'needs the latest Google script update.' : e.message), 6000);
+  } finally { garminBusy = false; }
 }
 function lockBox() {
   const box = h('div.wsec', { style: 'margin-top:18px' });
@@ -664,10 +703,12 @@ function openWardrobe() {
   });
 }
 
-// ---------- TRAIN ----------
+// ---------- HEALTH (training · food · body) ----------
 const trainCfg = () => gameCfg().train || null;
-const workouts = () => (S.data.journal || []).filter(j => j.kind === 'workout')
-  .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt);
+const bodyCfg = () => gameCfg().body || null;
+const J = kind => (S.data.journal || []).filter(j => j.kind === kind);
+const workouts = () => J('workout').sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt);
+const gymWorkouts = () => workouts().filter(w => !isSport(w));
 const restOn = d => (S.data.journal || []).find(j => j.kind === 'rest' && j.date === d);
 const WO_KEY = 'lrpg.wo';
 const loadDraft = () => { try { return JSON.parse(localStorage.getItem(WO_KEY) || 'null'); } catch (e) { return null; } };
@@ -675,67 +716,87 @@ const saveDraft = d => { try { d ? localStorage.setItem(WO_KEY, JSON.stringify(d
 const kgTxt = kg => (kg > 0 ? (Math.round(kg * 100) / 100) + ' kg' : 'BW');
 const setsTxt = sets => sets.map(([kg, r]) => (kg > 0 ? (Math.round(kg * 100) / 100) + '×' : '') + r).join(' · ');
 const planDay = (tr, id) => tr && tr.plan && tr.plan.days.find(d => d.id === id);
+const sportName = k => (SPORTS[k] || SPORTS.other).name;
+const bodyWeight = () => weightAvg(S.data.journal, today()) || latestWeight(S.data.journal, today()) || Number((bodyCfg() || {}).weight) || 70;
+const wDesc = w => isSport(w)
+  ? (w.data.min ? w.data.min + ' min' : '') + (w.data.km ? ' · ' + w.data.km + ' km' : '') + (w.data.kcal ? ' · ' + w.data.kcal + ' kcal' : '') + (w.data.src === 'garmin' ? ' · Garmin' : '')
+  : setCount(w) + ' sets' + (w.data.min ? ' · ' + w.data.min + ' min' : '');
+const dayDesc = d => d.type === 'sport' ? sportName(d.sport) + (d.min ? ' · ' + d.min + ' min' : '') : d.ex.length + ' exercises';
 
 function nextSession(tr, from) {
-  for (let i = 1; i <= 7; i++) { const d = addDays(from, i), s = sessionOn(tr, d); if (s) return { date: d, ...s }; }
+  for (let i = 1; i <= 7; i++) { const d = addDays(from, i), s = sessionsOn(tr, d)[0]; if (s) return { date: d, ...s }; }
   return null;
 }
 function weekCells(tr) {
-  const t = today(), ws = weekStart(t), ws2 = workouts();
-  const byDay = {}; ws2.forEach(w => { (byDay[w.date] = byDay[w.date] || []).push(w); });
+  const t = today(), ws = weekStart(t), all = workouts();
+  const byDay = {}; all.forEach(w => { (byDay[w.date] = byDay[w.date] || []).push(w); });
   return WEEKDAYS.map((wd, i) => {
-    const d = addDays(ws, i), s = sessionOn(tr, d), done = byDay[d], rest = restOn(d);
+    const d = addDays(ws, i), ss = sessionsOn(tr, d), done = byDay[d], rest = restOn(d);
     let st = 'up';
-    if (done) st = 'done';
-    else if (!s) st = 'off';
+    if (done && done.length >= ss.length) st = 'done';
+    else if (!ss.length) st = done ? 'done' : 'off';
     else if (rest) st = 'rest';
     else if (d < t) { const nx = addDays(d, 1); st = byDay[nx] ? 'done' : nx >= t ? 'late' : 'miss'; }
-    return h('div.wk.' + st + (d === t ? '.today' : ''), null, h('b', null, wd), h('span', null, done ? '✓' : s ? s.id : '·'));
+    return h('div.wk.' + st + (d === t ? '.today' : ''), null, h('b', null, wd), h('span', null, done && st === 'done' ? '✓' : ss.length ? ss.map(s => s.id).join('') : '·'));
   });
+}
+
+function viewHealth() {
+  const tab = S.hTab || 'train';
+  const tabs = h('div.tabs.htabs', null, [['train', 'Training'], ['food', 'Food'], ['body', 'Body']].map(([k, l]) =>
+    h('button' + (tab === k ? '.on' : ''), { onclick: () => { S.hTab = k; render(); } }, l)));
+  return h('div', null, h('div.hbar', null, tabs), tab === 'food' ? viewFood() : tab === 'body' ? viewBody() : viewTrain());
 }
 
 function viewTrain() {
   const tr = trainCfg(), t = today(), g = S.g;
   if (!tr || !tr.plan) {
     return h('div', null, panel('Training', null,
-      h('p', null, 'Set up your gym routine. Answer a few questions and get a recommended plan, or enter the plan you already follow.'),
+      h('p', null, 'Set up your routine: gym days plus the sports you play (running, padel, basketball, football…). Get a recommended gym plan or enter your own.'),
       h('div.list', null,
         h('div.item', null, iconCanvas('dumbbell', 3), h('div.grow', null, h('div.t1', null, 'Log every set'), h('div.t2', null, 'Weights and reps are filled in from last time, with a rest timer between sets.'))),
-        h('div.item', null, iconCanvas('star', 3), h('div.grow', null, h('div.t1', null, 'Earn XP for showing up'), h('div.t2', null, '+' + RULES.gym.xp + ' XP, +' + RULES.gym.gold + ' G and +' + RULES.gym.hp + ' HP per workout; +' + RULES.gym.prXp + ' XP for every personal record.'))),
-        h('div.item', null, iconCanvas('heart', 3), h('div.grow', null, h('div.t1', null, 'Skipping costs HP'), h('div.t2', null, 'A scheduled session you miss costs ' + (-RULES.gym.missed) + ' HP. You get one extra day to make it up.')))),
-      h('div.btns', null, h('button.btn.gold.block', { onclick: openTrainSetup }, 'Set up training'))));
+        h('div.item', null, iconCanvas('bolt', 3), h('div.grow', null, h('div.t1', null, 'Sports count too'), h('div.t2', null, 'Schedule a run or padel like any session; log the time, distance and effort, or let Garmin sync it.'))),
+        h('div.item', null, iconCanvas('heart', 3), h('div.grow', null, h('div.t1', null, 'Show up, earn XP; skip, lose HP'), h('div.t2', null, '+' + RULES.gym.xp + ' XP, +' + RULES.gym.gold + ' G, +' + RULES.gym.hp + ' HP per session. A missed session costs ' + (-RULES.gym.missed) + ' HP after one make-up day.')))),
+      h('div.btns', null, h('button.btn.gold.block', { onclick: openTrainSetup }, 'Set up training'),
+        h('button.btn.ghost.block', { onclick: () => openActivity({}) }, 'Just log an activity'))),
+      workouts().length ? panel('History', null, h('div.list', null, workouts().slice(-12).reverse().map(w => h('button.item.plain', { onclick: () => openWorkoutDetail(w) },
+        iconCanvas(isSport(w) ? 'bolt' : 'dumbbell', 2), h('div.grow', null, h('div.t1', null, w.data.name), h('div.t2', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + ' · ' + wDesc(w))))))) : null);
   }
   const ws = workouts(), draft = loadDraft();
-  const sess = sessionOn(tr, t), doneToday = ws.filter(w => w.date === t);
+  const sessions = restOn(t) ? [] : sessionsOn(tr, t), doneToday = ws.filter(w => w.date === t);
   const makeup = (g.gym.pending || []).filter(p => p.date < t);
-  const startBtn = (id, label) => h('button.btn.gold', { onclick: () => openWorkout({ dayId: id }) }, label);
-  const todayKids = [];
-  if (draft) todayKids.push(h('div.callout', null, h('b', null, 'Workout in progress: ' + draft.name), h('div.small.muted', null, 'Started ' + shortDate(draft.date) + '. Your sets are saved on this phone.')),
+  const doneKinds = doneToday.map(w => isSport(w) ? 'sport' : 'gym');
+  const todo = sessions.filter(s => { const i = doneKinds.indexOf(s.type); if (i >= 0) { doneKinds.splice(i, 1); return false; } return true; });
+  const startFor = s => s.type === 'sport'
+    ? h('button.btn.gold', { onclick: () => openActivity({ sport: s.sport, min: s.min, name: s.name }) }, 'Log ' + s.name)
+    : h('button.btn.gold', { onclick: () => openWorkout({ dayId: s.id }) }, 'Start ' + s.name);
+  const kids = [];
+  if (draft) kids.push(h('div.callout', null, h('b', null, 'Workout in progress: ' + draft.name), h('div.small.muted', null, 'Started ' + shortDate(draft.date) + '. Your sets are saved on this phone.')),
     h('div.btns', null, h('button.btn.gold', { onclick: () => openWorkout({ resume: true }) }, 'Resume workout')));
-  else {
-    makeup.forEach(p => {
-      const d = planDay(tr, sessionOn(tr, p.date).id);
-      todayKids.push(h('div.callout.warn', null, h('b', null, 'You missed ' + p.name + ' (' + WEEKDAYS[wdOf(p.date)] + ').'),
-        h('div.small', null, 'Do it today to keep your HP. At midnight it costs ' + (-RULES.gym.missed) + ' HP.')),
-      h('div.btns', null, startBtn(d ? d.id : null, 'Start ' + p.name)));
-    });
-    if (doneToday.length) todayKids.push(h('div.callout.good', null, h('b', null, 'Done today: ' + doneToday.map(w => w.data.name).join(', ')),
-      h('div.small.muted', null, doneToday.map(w => setCount(w) + ' sets · ' + Math.round(volume(w)).toLocaleString('en-US') + ' kg lifted' + (w.data.min ? ' · ' + w.data.min + ' min' : '')).join(' / '))));
-    else if (sess && restOn(t)) todayKids.push(h('div.callout', null, h('b', null, 'Rest day taken (' + restOn(t).data.reason + ')'), h('div.small.muted', null, sess.name + ' is excused today. No HP lost.')),
-      h('div.btns', null, h('button.btn.sm.ghost', { onclick: () => act(() => api('logDelete', restOn(t).id), 'Rest day removed') }, 'Undo rest day')));
-    else if (sess) {
-      const d = planDay(tr, sess.id);
-      todayKids.push(h('div.big-num', null, sess.name), h('div.small.muted', null, d ? d.ex.length + ' exercises · ' + d.ex.reduce((s, x) => s + Number(x.sets || 0), 0) + ' sets · about ' + (tr.setup && tr.setup.minutes || 60) + ' min' : ''),
-        h('div.btns', null, startBtn(sess.id, 'Start workout'), h('button.btn.ghost', { onclick: () => openRestDay(t) }, 'Can\'t train today')));
-    } else {
-      const n = nextSession(tr, t);
-      todayKids.push(h('div.big-num', null, 'Rest day'), h('div.small.muted', null, n ? 'Next: ' + n.name + ' on ' + DAYS[dow(n.date)] + ', ' + shortDate(n.date) + '.' : 'No sessions scheduled.'));
-    }
-    todayKids.push(h('div.btns', null,
-      h('button.btn.sm.ghost', { onclick: () => pickDayThen(id => openWorkout({ dayId: id })) }, 'Other workout'),
-      h('button.btn.sm.ghost', { onclick: () => pickDayThen(id => openWorkout({ dayId: id, past: true })) }, 'Log a past workout')));
+  makeup.forEach(p => {
+    const s = sessionsOn(tr, p.date).find(x => x.name === p.name) || { name: p.name, type: p.type || 'gym' };
+    kids.push(h('div.callout.warn', null, h('b', null, 'You missed ' + p.name + ' (' + WEEKDAYS[wdOf(p.date)] + ').'), h('div.small', null, 'Do it today to keep your HP. At midnight it costs ' + (-RULES.gym.missed) + ' HP.')),
+      draft ? null : h('div.btns', null, startFor(s)));
+  });
+  if (doneToday.length) kids.push(h('div.callout.good', null, h('b', null, 'Done today: ' + doneToday.map(w => w.data.name).join(', ')), h('div.small.muted', null, doneToday.map(wDesc).join(' / '))));
+  if (restOn(t)) kids.push(h('div.callout', null, h('b', null, 'Rest day taken (' + restOn(t).data.reason + ')'), h('div.small.muted', null, 'Today\'s sessions are excused. No HP lost.')),
+    h('div.btns', null, h('button.btn.sm.ghost', { onclick: () => act(() => api('logDelete', restOn(t).id), 'Rest day removed') }, 'Undo rest day')));
+  todo.forEach(s => {
+    const d = planDay(tr, s.id);
+    kids.push(h('div.big-num', { style: 'margin-top:8px' }, s.name), h('div.small.muted', null, s.type === 'sport' ? sportName(s.sport) + (s.min ? ' · target ' + s.min + ' min' : '')
+      : d ? d.ex.length + ' exercises · ' + d.ex.reduce((x, e) => x + Number(e.sets || 0), 0) + ' sets · about ' + (tr.setup && tr.setup.minutes || 60) + ' min' : ''),
+    draft && s.type !== 'sport' ? null : h('div.btns', null, startFor(s)));
+  });
+  if (todo.length && !restOn(t)) kids.push(h('div.btns', null, h('button.btn.sm.ghost', { onclick: () => openRestDay(t) }, 'Can\'t train today')));
+  if (!sessions.length && !restOn(t) && !doneToday.length) {
+    const n = nextSession(tr, t);
+    kids.push(h('div.big-num', null, 'Rest day'), h('div.small.muted', null, n ? 'Next: ' + n.name + ' on ' + DAYS[dow(n.date)] + ', ' + shortDate(n.date) + '.' : 'No sessions scheduled.'));
   }
-  const todayP = panel('Today', shortDate(t), todayKids);
+  kids.push(h('div.btns', null,
+    h('button.btn.sm.ghost', { onclick: () => openActivity({}) }, 'Log activity'),
+    h('button.btn.sm.ghost', { onclick: () => pickDayThen(id => openWorkout({ dayId: id })) }, 'Gym workout'),
+    h('button.btn.sm.ghost', { onclick: () => pickDayThen(id => openWorkout({ dayId: id, past: true })) }, 'Past gym workout')));
+  const todayP = panel('Today', shortDate(t), kids);
   const wk = g.gym.week;
   const weekP = panel('This week', wk.sched ? wk.done + '/' + wk.sched + ' done' : '', h('div.week', null, weekCells(tr)),
     h('p.small.muted', null, 'Clear every scheduled session this week for +' + RULES.gym.weekXp + ' XP and +' + RULES.gym.weekGold + ' G.'));
@@ -744,29 +805,63 @@ function viewTrain() {
   const planP = panel('Your plan', tr.plan.source === 'rec' ? 'recommended' : 'custom',
     h('div.t1', { style: 'margin-bottom:6px' }, tr.plan.name),
     tr.plan.days.map(d => {
-      const on = WEEKDAYS.filter((_, i) => sched[i] === d.id);
+      const on = WEEKDAYS.filter((_, i) => schedIds(sched, i).includes(d.id));
       return h('details.pday', null, h('summary', null, h('b', null, d.id + ' · ' + d.name), h('span.small.muted', null, on.length ? on.join(', ') : 'not scheduled')),
-        h('div.list', null, d.ex.map(x => h('div.item', null, h('div.grow', null, h('div', null, x.name), h('div.t2', null, x.sets + ' × ' + x.reps + (EX[x.id] && EX[x.id].secs ? ' s' : '') + ' · rest ' + fmtRest(x.rest)))))));
+        d.type === 'sport' ? h('div.small.muted', { style: 'padding:6px 0' }, dayDesc(d))
+          : h('div.list', null, d.ex.map(x => h('div.item', null, h('div.grow', null, h('div', null, x.name), h('div.t2', null, x.sets + ' × ' + x.reps + (EX[x.id] && EX[x.id].secs ? ' s' : '') + ' · rest ' + fmtRest(x.rest)))))));
     }),
     h('div.btns', null, h('button.btn.sm', { onclick: () => openPlanEditor(tr.plan, sched) }, 'Edit plan'), h('button.btn.sm.ghost', { onclick: openTrainSetup }, 'New plan')));
 
-  const best = Object.entries(prTable(ws)).sort((a, b) => (a[1].date < b[1].date ? 1 : -1)).slice(0, 8);
+  const best = Object.entries(prTable(gymWorkouts())).sort((a, b) => (a[1].date < b[1].date ? 1 : -1)).slice(0, 8);
   const prP = panel('Personal records', null, best.length ? h('div.list', null, best.map(([n, p]) => h('div.item', null, h('div.grow', null, h('div.t1', null, n), h('div.t2', null, shortDate(p.date))),
     h('div.amt', null, p.bw ? p.reps + ' reps' : kgTxt(p.kg) + ' × ' + p.reps), !p.bw ? h('div.small.muted', { style: 'width:70px;text-align:right' }, '≈' + Math.round(p.v) + ' 1RM') : null)))
     : h('div.empty', null, 'Records show up after your second session of an exercise.'));
 
-  const histP = panel('History', ws.length ? ws.length + (ws.length === 1 ? ' workout' : ' workouts') : '', ws.length ? h('div.list', null, ws.slice(-10).reverse().map(w => h('button.item.plain', { onclick: () => openWorkoutDetail(w) },
-    iconCanvas('dumbbell', 2), h('div.grow', null, h('div.t1', null, w.data.name), h('div.t2', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + ' · ' + setCount(w) + ' sets' + (w.data.min ? ' · ' + w.data.min + ' min' : ''))),
-    h('div.amt', null, Math.round(volume(w)).toLocaleString('en-US') + ' kg')))) : h('div.empty', null, 'No workouts logged yet.'));
+  const histP = panel('History', ws.length ? ws.length + (ws.length === 1 ? ' session' : ' sessions') : '', ws.length ? h('div.list', null, ws.slice(-12).reverse().map(w => h('button.item.plain', { onclick: () => openWorkoutDetail(w) },
+    iconCanvas(isSport(w) ? 'bolt' : 'dumbbell', 2), h('div.grow', null, h('div.t1', null, w.data.name), h('div.t2', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + ' · ' + wDesc(w))),
+    isSport(w) ? null : h('div.amt', null, Math.round(volume(w)).toLocaleString('en-US') + ' kg')))) : h('div.empty', null, 'Nothing logged yet.'));
 
   return h('div', null, todayP, weekP, planP, prP, histP);
 }
 
 function pickDayThen(fn) {
   const tr = trainCfg();
-  modal('Which workout?', close => h('div.list', null, tr.plan.days.map(d => h('button.item.plain', { onclick: () => { close(); fn(d.id); } },
+  const days = tr && tr.plan ? tr.plan.days.filter(d => d.type !== 'sport') : [];
+  modal('Which workout?', close => h('div.list', null, days.map(d => h('button.item.plain', { onclick: () => { close(); fn(d.id); } },
     h('div.grow', null, h('div.t1', null, d.id + ' · ' + d.name), h('div.t2', null, d.ex.map(x => x.name).slice(0, 4).join(', ') + (d.ex.length > 4 ? '…' : ''))))),
   h('button.item.plain', { onclick: () => { close(); fn(null); } }, h('div.grow', null, h('div.t1', null, 'Empty workout'), h('div.t2', null, 'Add exercises as you go')))));
+}
+
+function openActivity(pre) {
+  modal('Log activity', close => {
+    let sport = pre.sport || 'run', effort = 'moderate';
+    const body = h('div'), err = h('div.err');
+    const date = h('input.in', { type: 'date', value: today(), max: today() });
+    const min = h('input.in', { inputmode: 'numeric', placeholder: 'e.g. 60', value: pre.min || '' });
+    const km = h('input.in', { inputmode: 'decimal', placeholder: 'optional' });
+    const note = h('input.in', { maxlength: 80, placeholder: 'optional' });
+    const est = h('div.small.muted');
+    const upd = () => { const m = Number(min.value) || 0; est.textContent = m ? 'About ' + sportKcal(sport, m, bodyWeight(), effort) + ' kcal burned (estimate).' : ''; };
+    [min].forEach(i => i.addEventListener('input', upd));
+    const paint = () => {
+      body.replaceChildren(
+        h('label.f', null, 'Activity'), h('div.chips', null, Object.entries(SPORTS).map(([k, x]) => h('button' + (sport === k ? '.on' : ''), { type: 'button', onclick: () => { sport = k; paint(); } }, x.name))),
+        h('div.grid2', null, h('div', null, h('label.f', null, 'Duration (min)'), min), SPORTS[sport].dist ? h('div', null, h('label.f', null, 'Distance (km)'), km) : h('div', null, h('label.f', null, 'Date'), date)),
+        SPORTS[sport].dist ? h('div', null, h('label.f', null, 'Date'), date) : null,
+        h('label.f', null, 'Effort'), h('div.chips', null, EFFORT.map(([k, l]) => h('button' + (effort === k ? '.on' : ''), { type: 'button', onclick: () => { effort = k; paint(); } }, l))),
+        h('label.f', null, 'Note'), note, est);
+      upd();
+    };
+    paint();
+    return h('div', null, body, err, h('div.btns', null, h('button.btn.gold.block', { onclick: async () => {
+      const m = Math.round(Number(min.value) || 0);
+      if (!(m > 0 && m <= 600)) { err.textContent = 'Enter how many minutes.'; return; }
+      if (!date.value || date.value > today()) { err.textContent = 'That date isn\'t valid.'; return; }
+      const k = SPORTS[sport].dist ? Math.round((Number(String(km.value).replace(',', '.')) || 0) * 100) / 100 : 0;
+      const data = { type: 'sport', sport, name: pre.name && pre.sport === sport ? pre.name : SPORTS[sport].name, min: m, km: k || undefined, effort, kcal: sportKcal(sport, m, bodyWeight(), effort), note: note.value.trim() || undefined, src: 'manual' };
+      if (await act(() => api('logAdd', [{ date: date.value, kind: 'workout', data }]), 'Saved: ' + data.name + ' ' + m + ' min')) close();
+    } }, 'Save activity')));
+  });
 }
 
 function openRestDay(date) {
@@ -775,54 +870,264 @@ function openRestDay(date) {
     const chips = h('div.chips');
     const paint = () => chips.replaceChildren(...[['sick', 'Sick'], ['injured', 'Injured'], ['travel', 'Travelling'], ['other', 'Other']].map(([k, l]) => h('button' + (reason === k ? '.on' : ''), { type: 'button', onclick: () => { reason = k; paint(); } }, l)));
     paint();
-    return h('div', null, h('p.small', null, 'Today\'s session is excused: no HP lost, no XP earned. Use it when you genuinely can\'t train.'), chips,
+    return h('div', null, h('p.small', null, 'Today\'s sessions are excused: no HP lost, no XP earned. Use it when you genuinely can\'t train.'), chips,
       h('div.btns', null, h('button.btn.gold.block', { onclick: async () => { if (await act(() => api('logAdd', [{ date, kind: 'rest', data: { reason } }]), 'Rest day saved')) close(); } }, 'Save rest day')));
+  });
+}
+
+// ----- food -----
+const mealsOn = d => J('meal').filter(m => m.date === d).sort((a, b) => a.createdAt - b.createdAt);
+const MEAL_SLOTS = [['breakfast', 'Breakfast'], ['lunch', 'Lunch'], ['dinner', 'Dinner'], ['snack', 'Snack']];
+const slotNow = () => { const hr = new Date().getHours(); return hr < 10 ? 'breakfast' : hr < 15 ? 'lunch' : hr < 18 ? 'snack' : 'dinner'; };
+function viewFood() {
+  const body = bodyCfg(), t = today();
+  const d = S.foodDay && S.foodDay <= t ? S.foodDay : t;
+  const tg = targets(body, weightAvg(S.data.journal, d));
+  const meals = mealsOn(d);
+  const sum = meals.reduce((s, m) => ({ kcal: s.kcal + (Number(m.data.kcal) || 0), p: s.p + (Number(m.data.p) || 0) }), { kcal: 0, p: 0 });
+  const burned = workouts().filter(w => w.date === d && isSport(w)).reduce((s, w) => s + (Number(w.data.kcal) || 0), 0);
+  const nav = h('div.row.between', { style: 'margin-bottom:10px' },
+    h('button.btn.sm.ghost', { onclick: () => { S.foodDay = addDays(d, -1); render(); }, 'aria-label': 'Previous day' }, '◀'),
+    h('b', null, d === t ? 'Today' : dayLabel(d)),
+    h('button.btn.sm.ghost', { disabled: d >= t, onclick: () => { S.foodDay = addDays(d, 1); render(); }, 'aria-label': 'Next day' }, '▶'));
+  const sumP = panel('Food', tg ? 'targets from your body stats' : '', nav,
+    tg ? [
+      h('div.kv', null, h('span', null, 'Protein'), h('b.num', null, Math.round(sum.p) + ' / ' + tg.protein + ' g')), bar(sum.p / tg.protein, sum.p >= tg.protein ? '' : 'xp'),
+      h('div.kv', { style: 'margin-top:6px' }, h('span', null, 'Calories'), h('b.num', null, Math.round(sum.kcal).toLocaleString('en-US') + ' / ' + tg.kcal.toLocaleString('en-US') + ' kcal')),
+      bar(sum.kcal / tg.kcal, sum.kcal > tg.kcal * 1.1 ? 'warn' : 'thin'),
+      h('div.small.muted', { style: 'margin-top:6px' }, (sum.p >= tg.protein ? 'Protein goal hit. ' : Math.max(0, tg.protein - Math.round(sum.p)) + ' g protein to go. ') +
+        (burned ? 'Sports burned about ' + burned + ' kcal (not added to your target). ' : '') + 'Hitting protein earns +' + RULES.protein.xp + ' XP at the end of the day.'),
+    ] : h('div.callout', null, h('b', null, 'Add your body stats first'), h('div.small', null, 'Height, age and weight set your daily protein and calorie targets.'),
+      h('div.btns', null, h('button.btn.sm', { onclick: openBodySetup }, 'Add body stats'))),
+    h('div.btns', null, h('button.btn.gold', { onclick: () => openMeal({ date: d }) }, '+ Add meal'),
+      h('button.btn.ghost', { onclick: () => S.data.scanEnabled ? snapFood(d) : toast('Photo logging needs GEMINI_API_KEY in Script Properties.', 4000) }, 'Snap a photo')));
+  const listP = panel('Meals', meals.length ? meals.length + '' : '', meals.length ? MEAL_SLOTS.map(([k, l]) => {
+    const xs = meals.filter(m => (m.data.slot || 'snack') === k);
+    return xs.length ? [h('div.glab', null, l), h('div.list', null, xs.map(m => h('div.item', null, h('div.grow', null, h('div.t1', null, m.data.name), h('div.t2', null, Math.round(m.data.kcal || 0) + ' kcal · ' + Math.round(m.data.p || 0) + ' g protein' + (m.data.src === 'photo' ? ' · from photo' : ''))),
+      h('button.btn.sm.ghost', { onclick: () => act(() => api('logDelete', m.id), 'Removed') }, '✕'))))] : null;
+  }) : h('div.empty', null, 'No meals logged for this day.'));
+  return h('div', null, sumP, listP);
+}
+function resizeImage(file, max = 1024) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => { const k = Math.min(1, max / Math.max(im.width, im.height)); const c = document.createElement('canvas');
+      c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.8).split(',')[1]); };
+    im.onerror = () => rej(new Error('Couldn\'t read that photo.'));
+    im.src = url;
+  });
+}
+const FOOD_PROMPT = ['You estimate nutrition from a meal photo for a fitness app used in Indonesia.',
+  'Identify each food on the plate with a realistic portion size, then estimate calories and protein. Use typical Indonesian recipes and portions where relevant (e.g. nasi putih 1 piring ≈ 200 g ≈ 260 kcal).',
+  'If the photo is not food, return an empty items list. Be conservative and do not invent hidden items.',
+  'Reply ONLY with JSON: {"items":[{"name":"short name in the language usually used for it","portion":"e.g. 1 piring / 150 g","kcal":number,"protein_g":number}],"confidence":"low|medium|high","note":"one short sentence about what is uncertain"}'].join('\n');
+function snapFood(date) {
+  const inp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
+  inp.addEventListener('change', async () => {
+    const f = inp.files && inp.files[0]; inp.remove();
+    if (!f) return;
+    document.body.classList.add('busy'); toast('Reading your meal…', 8000);
+    try {
+      const img = await resizeImage(f);
+      const r = await api('scanDocument', { prompt: FOOD_PROMPT, images: [img] });
+      const items = (r && r.items || []).filter(x => x && x.name);
+      if (!items.length) { toast('No food found in that photo. Try again or add it by hand.', 4000); return; }
+      openMeal({ date, photo: { items, confidence: r.confidence || 'medium', note: r.note || '' } });
+    } catch (e) { toast('⚠ ' + e.message, 4500); }
+    finally { document.body.classList.remove('busy'); document.querySelectorAll('.toast').forEach(t => t.remove()); }
+  });
+  document.body.append(inp); inp.click();
+}
+function openMeal(pre) {
+  modal(pre.photo ? 'Meal from photo' : 'Add meal', close => {
+    let slot = slotNow();
+    const name = h('input.in', { placeholder: 'e.g. nasi + ayam bakar', maxlength: 60 });
+    const kcal = h('input.in', { inputmode: 'numeric', placeholder: 'kcal' });
+    const p = h('input.in', { inputmode: 'decimal', placeholder: 'grams' });
+    const ph = pre.photo;
+    if (ph) {
+      name.value = ph.items.map(x => x.name).join(' + ').slice(0, 60);
+      kcal.value = Math.round(ph.items.reduce((s, x) => s + (Number(x.kcal) || 0), 0));
+      p.value = Math.round(ph.items.reduce((s, x) => s + (Number(x.protein_g) || 0), 0));
+    }
+    const qty = h('input.in', { inputmode: 'decimal', value: '1' });
+    const err = h('div.err'), slots = h('div.chips'), picks = h('div');
+    const q = h('input.in', { placeholder: 'Search common foods or your past meals' });
+    const recent = [];
+    J('meal').slice().sort((a, b) => b.createdAt - a.createdAt).forEach(m => { if (!recent.some(r => r[0] === m.data.name)) recent.push([m.data.name, m.data.kcal, m.data.p]); });
+    const fill = f => { name.value = f[0]; kcal.value = Math.round(f[1]); p.value = Math.round(f[2] * 10) / 10; qty.value = '1'; };
+    const paintSlots = () => slots.replaceChildren(...MEAL_SLOTS.map(([k, l]) => h('button' + (slot === k ? '.on' : ''), { type: 'button', onclick: () => { slot = k; paintSlots(); } }, l)));
+    const paintPicks = () => {
+      const s = q.value.trim().toLowerCase();
+      const list = [...recent.slice(0, 30).map(r => [...r, 'recent']), ...FOODS.map(f => [...f, ''])].filter(f => !s || f[0].toLowerCase().includes(s)).slice(0, s ? 12 : 8);
+      picks.replaceChildren(h('div.picks', null, list.map(f => h('button', { type: 'button', onclick: () => fill(f) }, h('span', null, f[0]), h('span.small.muted', null, Math.round(f[1]) + ' kcal · ' + Math.round(f[2]) + ' g' + (f[3] ? ' · ' + f[3] : ''))))));
+    };
+    q.addEventListener('input', paintPicks);
+    paintSlots(); paintPicks();
+    return h('div', null, slots,
+      ph ? h('div.callout', { style: 'margin-top:10px' }, h('b', null, 'Estimated from your photo (' + ph.confidence + ' confidence)'),
+        h('div.small', null, ph.items.map(x => x.name + (x.portion ? ' (' + x.portion + ')' : '') + ': ' + Math.round(x.kcal || 0) + ' kcal, ' + Math.round(x.protein_g || 0) + ' g').join(' · ')),
+        ph.note ? h('div.small.muted', null, ph.note) : null, h('div.small.muted', null, 'Check the numbers and fix anything that looks off before saving.'))
+        : [h('label.f', null, 'Quick pick'), q, picks],
+      h('label.f', null, 'Food'), name,
+      h('div.grid3', null, h('div', null, h('label.f', null, 'Calories'), kcal), h('div', null, h('label.f', null, 'Protein (g)'), p), h('div', null, h('label.f', null, 'Portions'), qty)),
+      ph ? null : h('p.small.muted', null, 'Values from the list are typical portions, so treat them as estimates.'), err,
+      h('div.btns', null, h('button.btn.gold.block', { onclick: async () => {
+        const n = name.value.trim(), k = Number(kcal.value) || 0, pr = Number(String(p.value).replace(',', '.')) || 0, x = Number(String(qty.value).replace(',', '.')) || 1;
+        if (!n) { err.textContent = 'Name the food.'; return; }
+        if (!(k > 0 || pr > 0)) { err.textContent = 'Add calories or protein.'; return; }
+        const data = { name: n + (x !== 1 ? ' ×' + x : ''), kcal: Math.round(k * x), p: Math.round(pr * x * 10) / 10, slot, src: ph ? 'photo' : 'manual' };
+        if (await act(() => api('logAdd', [{ date: pre.date || today(), kind: 'meal', data }]), 'Added ' + data.name)) close();
+      } }, 'Add meal')));
+  });
+}
+
+// ----- body -----
+function viewBody() {
+  const body = bodyCfg(), t = today();
+  const ws = J('weight').sort((a, b) => a.date < b.date ? -1 : 1);
+  const avg = weightAvg(S.data.journal, t), prevAvg = weightAvg(S.data.journal, addDays(t, -7));
+  const tg = targets(body, avg);
+  const statsP = panel('Body', null, body ? [
+    h('div.grid3.stats', null,
+      h('div', null, h('div.tiny.muted', null, '7-DAY AVG'), h('div.big-num', null, avg ? avg + ' kg' : '–')),
+      h('div', null, h('div.tiny.muted', null, 'VS LAST WEEK'), h('div.big-num' + (avg && prevAvg ? (avg >= prevAvg ? '.green' : '.red') : ''), null, avg && prevAvg ? (avg - prevAvg >= 0 ? '+' : '') + (Math.round((avg - prevAvg) * 10) / 10) + ' kg' : '–')),
+      h('div', null, h('div.tiny.muted', null, 'WAIST'), h('div.big-num', null, (ws.filter(w => w.data.waist).pop() || { data: {} }).data.waist ? ws.filter(w => w.data.waist).pop().data.waist + ' cm' : '–'))),
+    tg ? h('p.small.muted', null, 'Daily target: ' + tg.kcal.toLocaleString('en-US') + ' kcal, ' + tg.protein + ' g protein (' + (GOALS.find(x => x[0] === body.goal) || GOALS[0])[1].toLowerCase() + '). For lean gain, a common target is about +0.5–1% of body weight a month on the 7-day average.') : null,
+    weightChart(ws),
+    h('div.btns', null, h('button.btn.gold', { onclick: openWeigh }, '+ Log weight'), h('button.btn.ghost', { onclick: openBodySetup }, 'Edit body stats')),
+  ] : [h('p', null, 'Add your height, age, sex and weight. The app turns them into daily protein and calorie targets for lean muscle gain, and tracks your weight as a 7-day average so daily water swings don\'t fool you.'),
+    h('div.btns', null, h('button.btn.gold.block', { onclick: openBodySetup }, 'Add body stats'))]);
+  const listP = ws.length ? panel('Weigh-ins', ws.length + '', h('div.list', null, ws.slice(-8).reverse().map(w => h('div.item', null, h('div.grow', null, h('div.t1', null, w.data.kg + ' kg' + (w.data.waist ? ' · waist ' + w.data.waist + ' cm' : '')), h('div.t2', null, dayLabel(w.date))),
+    h('button.btn.sm.ghost', { onclick: () => act(() => api('logDelete', w.id), 'Removed') }, '✕'))))) : null;
+  const days = J('daily').sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 7);
+  const gP = days.length ? panel('From Garmin', 'last 7 days', h('div.list', null, days.map(x => h('div.item', null, h('div.grow', null, h('div.t1', null, dayLabel(x.date)),
+    h('div.t2', null, [x.data.steps != null ? Number(x.data.steps).toLocaleString('en-US') + ' steps' : '', x.data.sleepMin ? 'sleep ' + Math.floor(x.data.sleepMin / 60) + 'h ' + (x.data.sleepMin % 60) + 'm' + (x.data.sleepScore ? ' (' + x.data.sleepScore + ')' : '') : '',
+      x.data.bbHigh != null ? 'Body Battery ' + (x.data.bbLow != null ? x.data.bbLow + '–' : '') + x.data.bbHigh : '', x.data.rhr ? 'resting HR ' + x.data.rhr : ''].filter(Boolean).join(' · '))))))) : null;
+  return h('div', null, statsP, gP, listP);
+}
+function weightChart(ws) {
+  const pts = ws.slice(-60);
+  if (pts.length < 2) return h('div.small.muted', { style: 'margin:8px 0' }, 'Weigh in a few mornings a week (after the toilet, before eating) to see your trend.');
+  const W = 320, H = 110, c = document.createElement('canvas');
+  c.width = W * 2; c.height = H * 2; c.style.cssText = 'width:100%;height:' + H + 'px;display:block;margin:10px 0';
+  const x = c.getContext('2d'); x.scale(2, 2);
+  const ks = pts.map(p => Number(p.data.kg)), lo = Math.min(...ks) - 0.5, hi = Math.max(...ks) + 0.5;
+  const d0 = pts[0].date, span = Math.max(1, daysBetween(d0, pts[pts.length - 1].date));
+  const X = d => 8 + (W - 16) * daysBetween(d0, d) / span, Y = k => 8 + (H - 16) * (1 - (k - lo) / (hi - lo));
+  x.fillStyle = '#94b0c2'; pts.forEach(p => x.fillRect(Math.round(X(p.date)) - 2, Math.round(Y(p.data.kg)) - 2, 4, 4));
+  x.strokeStyle = '#ffcd75'; x.lineWidth = 3; x.beginPath();
+  pts.forEach((p, i) => { const a = weightAvg(S.data.journal, p.date); const px = X(p.date), py = Y(a); i ? x.lineTo(px, py) : x.moveTo(px, py); });
+  x.stroke();
+  x.fillStyle = '#94b0c2'; x.font = '11px system-ui'; x.fillText(hi.toFixed(1), 2, 12); x.fillText(lo.toFixed(1), 2, H - 2);
+  return h('div', null, c, h('div.legend', null, h('span', { style: '--c:#94b0c2' }, 'weigh-in'), h('span', { style: '--c:#ffcd75' }, '7-day average')));
+}
+function openWeigh() {
+  modal('Log weight', close => {
+    const kg = h('input.in.big', { inputmode: 'decimal', placeholder: '0.0', value: latestWeight(S.data.journal, today()) || '' });
+    const waist = h('input.in', { inputmode: 'decimal', placeholder: 'optional' });
+    const date = h('input.in', { type: 'date', value: today(), max: today() });
+    const err = h('div.err');
+    return h('div', null, h('label.f', null, 'Weight (kg)'), kg, h('div.grid2', null, h('div', null, h('label.f', null, 'Waist at navel (cm)'), waist), h('div', null, h('label.f', null, 'Date'), date)), err,
+      h('div.btns', null, h('button.btn.gold.block', { onclick: async () => {
+        const k = Number(String(kg.value).replace(',', '.')), w = Number(String(waist.value).replace(',', '.')) || 0;
+        if (!(k > 25 && k < 300)) { err.textContent = 'Enter your weight in kg.'; return; }
+        if (await act(() => api('logAdd', [{ date: date.value || today(), kind: 'weight', data: { kg: Math.round(k * 10) / 10, waist: w ? Math.round(w * 10) / 10 : undefined } }]), 'Weight saved')) close();
+      } }, 'Save')));
+  });
+}
+function openBodySetup() {
+  const b = { sex: 'male', age: '', height: '', weight: '', activity: 'moderate', goal: 'gain', ...(bodyCfg() || {}) };
+  modal('Body stats', close => {
+    const body = h('div'), err = h('div.err');
+    const one = (field, opts) => h('div.chips', null, opts.map(([k, l]) => h('button' + (b[field] === k ? '.on' : ''), { type: 'button', onclick: () => { b[field] = k; paint(); } }, l)));
+    const num = (field, ph) => h('input.in', { inputmode: 'decimal', placeholder: ph, value: b[field] || '', oninput: e => { b[field] = e.target.value; } });
+    const paint = () => body.replaceChildren(
+      h('label.f', null, 'Sex (for the calorie formula)'), one('sex', [['male', 'Male'], ['female', 'Female']]),
+      h('div.grid3', null, h('div', null, h('label.f', null, 'Age'), num('age', 'years')), h('div', null, h('label.f', null, 'Height'), num('height', 'cm')), h('div', null, h('label.f', null, 'Weight'), num('weight', 'kg'))),
+      h('label.f', null, 'Activity level'), one('activity', ACTIVITY.map(a => [a[0], a[1]])),
+      h('label.f', null, 'Goal'), one('goal', GOALS.map(g => [g[0], g[1]])));
+    paint();
+    return h('div', null, body, err, h('p.small.muted', null, 'Calories use the Mifflin-St Jeor formula × your activity level, plus a small surplus for lean gain. Protein is 1.8 g per kg (2.0 when cutting). These are starting points: adjust after 2–3 weeks of weigh-ins.'),
+      h('div.btns', null, h('button.btn.gold.block', { onclick: async () => {
+        const age = Number(b.age), hgt = Number(b.height), w = Number(String(b.weight).replace(',', '.'));
+        if (!(age >= 14 && age <= 90) || !(hgt >= 120 && hgt <= 230) || !(w > 25 && w < 300)) { err.textContent = 'Check age, height and weight.'; return; }
+        const clean = { sex: b.sex, age, height: hgt, weight: Math.round(w * 10) / 10, activity: b.activity, goal: b.goal };
+        const ok = await saveGame({ body: clean });
+        if (ok && !J('weight').length) await act(() => api('logAdd', [{ date: today(), kind: 'weight', data: { kg: clean.weight } }]));
+        if (ok) { toast('Body stats saved'); close(); }
+      } }, 'Save')));
   });
 }
 
 // ----- setup -----
 function openTrainSetup() {
   const old = (trainCfg() && trainCfg().setup) || {};
-  const st = { goal: old.goal || 'muscle', level: old.level || 'beginner', days: old.days || [0, 2, 4], minutes: old.minutes || 60, equip: old.equip || 'gym' };
+  const st = { goal: old.goal || 'muscle', level: old.level || 'beginner', days: old.days || [0, 2, 4], minutes: old.minutes || 60, equip: old.equip || 'gym', sports: { ...(old.sports || {}) } };
   modal('Training setup', close => {
     const body = h('div');
     const one = (field, opts) => h('div.chips', null, opts.map(([k, l]) => h('button' + (st[field] === k ? '.on' : ''), { type: 'button', onclick: () => { st[field] = k; paint(); } }, l)));
     const err = h('div.err');
+    const dayChips = (arr, set) => h('div.chips', null, WEEKDAYS.map((w, i) => h('button' + (arr.includes(i) ? '.on' : ''), { type: 'button', onclick: () => {
+      set(arr.includes(i) ? arr.filter(x => x !== i) : [...arr, i].sort((a, b) => a - b)); paint(); } }, w)));
     const paint = () => body.replaceChildren(
       h('label.f', null, 'Main goal'), one('goal', [['muscle', 'Build muscle'], ['strength', 'Get stronger'], ['fitness', 'General fitness']]),
-      h('label.f', null, 'Training experience'), one('level', [['beginner', 'Under 1 year'], ['intermediate', '1–3 years'], ['advanced', '3+ years']]),
-      h('label.f', null, 'Training days (' + st.days.length + ' a week)'),
-      h('div.chips', null, WEEKDAYS.map((w, i) => h('button' + (st.days.includes(i) ? '.on' : ''), { type: 'button', onclick: () => {
-        st.days = st.days.includes(i) ? st.days.filter(x => x !== i) : [...st.days, i].sort((a, b) => a - b); paint(); } }, w))),
-      h('label.f', null, 'Time per session'), one('minutes', [[45, '45 min'], [60, '60 min'], [75, '75 min'], [90, '90 min']]),
+      h('label.f', null, 'Gym experience'), one('level', [['beginner', 'Under 1 year'], ['intermediate', '1–3 years'], ['advanced', '3+ years']]),
+      h('label.f', null, 'Gym days (' + st.days.length + ' a week)'), dayChips(st.days, v => { st.days = v; }),
+      h('label.f', null, 'Time per gym session'), one('minutes', [[45, '45 min'], [60, '60 min'], [75, '75 min'], [90, '90 min']]),
       h('label.f', null, 'Equipment'), one('equip', [['gym', 'Full gym'], ['db', 'Dumbbells only'], ['bw', 'Bodyweight only']]),
-      st.days.length ? h('p.small.muted', null, 'Recommended for ' + st.days.length + ' days: ' + SPLIT_TXT[Math.min(6, st.days.length)] + '.') : null);
+      h('label.f', null, 'Sports you play'),
+      h('div.chips', null, Object.entries(SPORTS).filter(([k]) => k !== 'other').map(([k, x]) => h('button' + (st.sports[k] ? '.on' : ''), { type: 'button', onclick: () => {
+        if (st.sports[k]) delete st.sports[k]; else st.sports[k] = []; paint(); } }, x.name))),
+      ...Object.keys(st.sports).map(k => h('div.sportdays', null, h('div.small', null, SPORTS[k].name + ': which days? (none = whenever you play)'), dayChips(st.sports[k], v => { st.sports[k] = v; }))),
+      st.days.length ? h('p.small.muted', null, 'Recommended for ' + st.days.length + ' gym days: ' + SPLIT_TXT[Math.min(6, st.days.length)] + '.') : null);
     paint();
-    const ok = () => { if (!st.days.length) { err.textContent = 'Pick at least one training day.'; return false; } if (st.days.length > 6) { err.textContent = 'Keep at least one rest day a week.'; return false; } err.textContent = ''; return true; };
+    const ok = () => {
+      const sportCount = Object.values(st.sports).reduce((s, a) => s + a.length, 0);
+      if (!st.days.length && !Object.keys(st.sports).length) { err.textContent = 'Pick at least one gym day or sport.'; return false; }
+      if (st.days.length > 6) { err.textContent = 'Keep at least one rest day a week.'; return false; }
+      if (st.days.length + sportCount > 10) { err.textContent = 'That\'s a lot of sessions. Plan fewer so you can recover.'; return false; }
+      err.textContent = ''; return true;
+    };
     return h('div', null, body, err, h('div.btns', null,
       h('button.btn.gold.block', { onclick: () => { if (!ok()) return; close(); previewPlan(buildRec(st), st); } }, 'Recommend a plan'),
       h('button.btn.ghost.block', { onclick: () => { if (!ok()) return; close(); openPlanEditor(blankPlan(st), null, st); } }, 'I\'ll enter my own plan')));
   });
 }
+const addSportDays = (p, st) => {
+  const free = () => 'ABCDEFGHIJKLMNOP'.split('').find(c => !p.days.some(d => d.id === c));
+  Object.entries(st.sports || {}).forEach(([k, days]) => {
+    const id = free();
+    p.days.push({ id, name: SPORTS[k].name, type: 'sport', sport: k, min: k === 'run' ? 30 : 60, ex: [] });
+    days.forEach(wd => { p.sched[wd] = [...schedIds(p.sched, wd), id]; });
+  });
+  return p;
+};
 function buildRec(st) {
-  const p = recommend(st);
+  const p = st.days.length ? recommend(st) : { name: 'Sports plan', source: 'rec', days: [], sched: {} };
+  Object.keys(p.sched).forEach(k => { p.sched[k] = schedIds(p.sched, k); });
   p.days.forEach(d => d.ex.forEach(x => {
     const e = EX[x.id];
     if (st.goal === 'strength' && e && e.k === 'c' && !e.secs && e.e !== 'b') { x.reps = '4-6'; x.rest = Math.max(x.rest, 180); x.sets = Math.max(x.sets, 4); }
     if (st.goal === 'fitness') { x.sets = Math.min(x.sets, 3); x.rest = Math.min(x.rest, 90); }
   }));
-  return p;
+  const sp = Object.keys(st.sports || {}).map(k => SPORTS[k].name.toLowerCase());
+  if (sp.length) p.name += ' + ' + sp.join(', ');
+  return addSportDays(p, st);
 }
 function blankPlan(st) {
-  const days = st.days.map((wd, i) => ({ id: 'ABCDEF'[i], name: 'Day ' + (i + 1), ex: [] }));
-  const sched = {}; st.days.forEach((wd, i) => { sched[wd] = days[i].id; });
-  return { name: 'My plan', source: 'custom', days, sched };
+  const days = st.days.map((wd, i) => ({ id: 'ABCDEF'[i], name: 'Day ' + (i + 1), type: 'gym', ex: [] }));
+  const sched = {}; st.days.forEach((wd, i) => { sched[wd] = [days[i].id]; });
+  return addSportDays({ name: 'My plan', source: 'custom', days, sched }, st);
 }
 function previewPlan(p, st) {
+  const legs = p.days.filter(d => d.type === 'sport' && /run|football|futsal|basketball/.test(d.sport)).length;
   modal('Your recommended plan', close => h('div', null,
     h('p.small', null, p.name.replace('Recommended · ', 'A ') + '. Compound lifts first, then isolation work. Add weight once every set reaches the top of the rep range (the logger tells you when).'),
-    p.days.map(d => h('div.pday-prev', null, h('div.t1', null, d.id + ' · ' + d.name + '  ', h('span.small.muted', null, WEEKDAYS.filter((_, i) => p.sched[i] === d.id).join(', '))),
-      h('div.small.muted', null, d.ex.map(x => x.name + ' ' + x.sets + '×' + x.reps).join(' · ')))),
+    legs && st.days.length ? h('p.small.muted', null, 'Tip: running and field sports load your legs too. Keep hard leg days away from the day before a match or long run.') : null,
+    p.days.map(d => h('div.pday-prev', null, h('div.t1', null, d.id + ' · ' + d.name + '  ', h('span.small.muted', null, WEEKDAYS.filter((_, i) => schedIds(p.sched, i).includes(d.id)).join(', ') || 'whenever you play')),
+      h('div.small.muted', null, d.type === 'sport' ? dayDesc(d) : d.ex.map(x => x.name + ' ' + x.sets + '×' + x.reps).join(' · ')))),
     h('div.btns', null,
       h('button.btn.gold.block', { onclick: async () => { if (await savePlan(p, p.sched, st)) close(); } }, 'Use this plan'),
       h('button.btn.ghost.block', { onclick: () => { close(); openPlanEditor(p, p.sched, st); } }, 'Change it first'))));
@@ -831,51 +1136,67 @@ async function savePlan(plan, sched, setup) {
   const tr = trainCfg() || {};
   const t = today();
   const hist = (tr.sched || []).filter(s => s.from < t);
-  hist.push({ from: t, map: sched });
-  const clean = { name: plan.name, source: plan.source, days: plan.days.map(d => ({ id: d.id, name: d.name, ex: d.ex.map(x => ({ id: x.id || '', name: x.name, sets: Number(x.sets) || 3, reps: String(x.reps || '8-12'), rest: Number(x.rest) || 90 })) })) };
+  const map = {}; Object.keys(sched).forEach(k => { const ids = schedIds(sched, k); if (ids.length) map[k] = ids; });
+  hist.push({ from: t, map });
+  const clean = { name: plan.name, source: plan.source, days: plan.days.map(d => d.type === 'sport'
+    ? { id: d.id, name: d.name, type: 'sport', sport: d.sport, min: Number(d.min) || 0, ex: [] }
+    : { id: d.id, name: d.name, type: 'gym', ex: d.ex.map(x => ({ id: x.id || '', name: x.name, sets: Number(x.sets) || 3, reps: String(x.reps || '8-12'), rest: Number(x.rest) || 90 })) }) };
   return saveGame({ train: { ...tr, setup: setup || tr.setup || null, plan: clean, sched: hist } }).then(ok => { if (ok) toast('Plan saved'); return ok; });
 }
 
 // ----- plan editor -----
 function openPlanEditor(plan0, sched0, setup) {
   const plan = JSON.parse(JSON.stringify(plan0));
-  const sched = { ...(sched0 || plan0.sched || {}) };
+  plan.days.forEach(d => { d.type = d.type || 'gym'; d.ex = d.ex || []; });
+  const src = sched0 || plan0.sched || {};
+  const sched = {}; WEEKDAYS.forEach((_, i) => { sched[i] = schedIds(src, i).slice(); });
   modal('Edit plan', close => {
     const body = h('div'), err = h('div.err');
-    const nextId = () => 'ABCDEFGH'.split('').find(c => !plan.days.some(d => d.id === c));
+    const nextId = () => 'ABCDEFGHIJKLMNOP'.split('').find(c => !plan.days.some(d => d.id === c));
+    const removeDay = (d, di) => { plan.days.splice(di, 1); Object.keys(sched).forEach(k => { sched[k] = sched[k].filter(x => x !== d.id); }); paint(); };
+    const gymBody = d => [
+      d.ex.map((x, xi) => h('div.exrow', null,
+        h('div.grow', null, h('div.small', null, x.name),
+          h('div.exnums', null,
+            h('input.in.sm', { inputmode: 'numeric', value: x.sets, 'aria-label': 'Sets', oninput: e => { x.sets = e.target.value; } }), h('span', null, 'sets ×'),
+            h('input.in.sm.w', { value: x.reps, 'aria-label': 'Reps', oninput: e => { x.reps = e.target.value; } }), h('span', null, 'reps'),
+            h('select.in.sm.w', { 'aria-label': 'Rest', onchange: e => { x.rest = Number(e.target.value); } }, [45, 60, 90, 120, 150, 180, 240].map(s => h('option', { value: s, selected: Number(x.rest) === s }, fmtRest(s) + ' rest'))))),
+        h('div.exbtns', null,
+          h('button', { type: 'button', 'aria-label': 'Move up', disabled: xi === 0, onclick: () => { d.ex.splice(xi - 1, 0, d.ex.splice(xi, 1)[0]); paint(); } }, '▲'),
+          h('button', { type: 'button', 'aria-label': 'Move down', disabled: xi === d.ex.length - 1, onclick: () => { d.ex.splice(xi + 1, 0, d.ex.splice(xi, 1)[0]); paint(); } }, '▼'),
+          h('button', { type: 'button', 'aria-label': 'Remove exercise', onclick: () => { d.ex.splice(xi, 1); paint(); } }, '✕')))),
+      h('button.btn.sm.ghost', { type: 'button', style: 'margin-top:8px', onclick: () => pickExercise(x => { d.ex.push(x); paint(); }) }, '+ Add exercise')];
+    const sportBody = d => h('div.grid2', { style: 'margin-top:8px' },
+      h('div', null, h('label.f', null, 'Sport'), h('select.in', { onchange: e => { const old = SPORTS[d.sport] && SPORTS[d.sport].name; d.sport = e.target.value; if (!d.name || d.name === old) d.name = SPORTS[d.sport].name; paint(); } },
+        Object.entries(SPORTS).map(([k, x]) => h('option', { value: k, selected: d.sport === k }, x.name)))),
+      h('div', null, h('label.f', null, 'Target (min)'), h('input.in', { inputmode: 'numeric', value: d.min || '', oninput: e => { d.min = e.target.value; } })));
     const paint = () => body.replaceChildren(
       h('label.f', null, 'Plan name'), h('input.in', { value: plan.name, maxlength: 60, oninput: e => { plan.name = e.target.value; } }),
-      ...plan.days.map((d, di) => h('div.pedit', null,
+      ...plan.days.map((d, di) => h('div.pedit' + (d.type === 'sport' ? '.sport' : ''), null,
         h('div.row', null, h('b.badge', null, d.id), h('input.in.grow', { value: d.name, maxlength: 30, 'aria-label': 'Day name', oninput: e => { d.name = e.target.value; } }),
-          h('button.btn.sm.ghost', { type: 'button', 'aria-label': 'Remove day', onclick: () => { if (d.ex.length && !confirm('Remove ' + d.name + '?')) return; plan.days.splice(di, 1); Object.keys(sched).forEach(k => { if (sched[k] === d.id) delete sched[k]; }); paint(); } }, '✕')),
-        d.ex.map((x, xi) => h('div.exrow', null,
-          h('div.grow', null, h('div.small', null, x.name),
-            h('div.exnums', null,
-              h('input.in.sm', { inputmode: 'numeric', value: x.sets, 'aria-label': 'Sets', oninput: e => { x.sets = e.target.value; } }), h('span', null, 'sets ×'),
-              h('input.in.sm.w', { value: x.reps, 'aria-label': 'Reps', oninput: e => { x.reps = e.target.value; } }), h('span', null, 'reps'),
-              h('select.in.sm.w', { 'aria-label': 'Rest', onchange: e => { x.rest = Number(e.target.value); } }, [45, 60, 90, 120, 150, 180, 240].map(s => h('option', { value: s, selected: Number(x.rest) === s }, fmtRest(s) + ' rest'))))),
-          h('div.exbtns', null,
-            h('button', { type: 'button', 'aria-label': 'Move up', disabled: xi === 0, onclick: () => { d.ex.splice(xi - 1, 0, d.ex.splice(xi, 1)[0]); paint(); } }, '▲'),
-            h('button', { type: 'button', 'aria-label': 'Move down', disabled: xi === d.ex.length - 1, onclick: () => { d.ex.splice(xi + 1, 0, d.ex.splice(xi, 1)[0]); paint(); } }, '▼'),
-            h('button', { type: 'button', 'aria-label': 'Remove exercise', onclick: () => { d.ex.splice(xi, 1); paint(); } }, '✕')))),
-        h('button.btn.sm.ghost', { type: 'button', style: 'margin-top:8px', onclick: () => pickExercise(x => { d.ex.push(x); paint(); }) }, '+ Add exercise'))),
-      plan.days.length < 7 ? h('div.btns', null, h('button.btn.sm', { type: 'button', onclick: () => { const id = nextId(); plan.days.push({ id, name: 'Day ' + (plan.days.length + 1), ex: [] }); paint(); } }, '+ Add day')) : null,
-      h('label.f', null, 'Weekly schedule'),
-      h('div.sched', null, WEEKDAYS.map((w, i) => h('label.srow', null, h('span', null, w),
-        h('select.in.sm', { onchange: e => { if (e.target.value) sched[i] = e.target.value; else delete sched[i]; } },
-          h('option', { value: '' }, 'Rest'), plan.days.map(d => h('option', { value: d.id, selected: sched[i] === d.id }, d.id + ' · ' + d.name)))))));
+          h('button.btn.sm.ghost', { type: 'button', 'aria-label': 'Remove day', onclick: () => { if (d.ex.length && !confirm('Remove ' + d.name + '?')) return; removeDay(d, di); } }, '✕')),
+        d.type === 'sport' ? sportBody(d) : gymBody(d))),
+      plan.days.length < 12 ? h('div.btns', null,
+        h('button.btn.sm', { type: 'button', onclick: () => { const id = nextId(); plan.days.push({ id, name: 'Gym ' + id, type: 'gym', ex: [] }); paint(); } }, '+ Gym day'),
+        h('button.btn.sm', { type: 'button', onclick: () => { const id = nextId(); plan.days.push({ id, name: 'Run', type: 'sport', sport: 'run', min: 30, ex: [] }); paint(); } }, '+ Sport day')) : null,
+      h('label.f', null, 'Weekly schedule (tap to add a session to a day; a day can have more than one)'),
+      h('div.sched', null, WEEKDAYS.map((w, i) => h('div.srow', null, h('span', null, w),
+        h('div.chips', null, plan.days.map(d => h('button' + (sched[i].includes(d.id) ? '.on' : ''), { type: 'button', onclick: () => {
+          sched[i] = sched[i].includes(d.id) ? sched[i].filter(x => x !== d.id) : [...sched[i], d.id]; paint(); } }, d.id + ' ' + d.name.slice(0, 10))))))));
     paint();
     const save = h('button.btn.gold.block', { onclick: async () => {
       plan.days.forEach(d => { d.name = d.name.trim() || 'Day ' + d.id; });
-      if (!plan.days.length || plan.days.every(d => !d.ex.length)) { err.textContent = 'Add at least one exercise.'; return; }
-      Object.keys(sched).forEach(k => { if (!plan.days.some(d => d.id === sched[k])) delete sched[k]; });
-      if (!Object.keys(sched).length) { err.textContent = 'Schedule at least one day.'; return; }
+      if (!plan.days.length || plan.days.every(d => d.type !== 'sport' && !d.ex.length)) { err.textContent = 'Add at least one exercise or sport.'; return; }
+      const empty = plan.days.find(d => d.type !== 'sport' && !d.ex.length);
+      if (empty) { err.textContent = empty.name + ' has no exercises. Add some or remove the day.'; return; }
+      Object.keys(sched).forEach(k => { sched[k] = sched[k].filter(id => plan.days.some(d => d.id === id)); });
+      if (!Object.values(sched).some(a => a.length)) { err.textContent = 'Schedule at least one day.'; return; }
       plan.name = plan.name.trim() || 'My plan';
       if (plan0.source === 'rec' && JSON.stringify(plan.days) !== JSON.stringify(plan0.days)) plan.source = 'custom';
       if (await savePlan(plan, sched, setup)) close();
     } }, 'Save plan');
     return h('div', null, body, err, h('div.btns', null, save),
-      h('p.small.muted', null, 'Schedule changes apply from today. Past days keep the schedule they had.'));
+      h('p.small.muted', null, 'Schedule changes apply from today. Past days keep the schedule they had. Unscheduled sports still count as bonus sessions when you log them.'));
   });
 }
 function pickExercise(onPick) {
@@ -905,7 +1226,7 @@ function beep() {
     o.frequency.value = 880; o.connect(gn); gn.connect(a.destination); gn.gain.setValueAtTime(.2, a.currentTime); gn.gain.exponentialRampToValueAtTime(.001, a.currentTime + .5); o.start(); o.stop(a.currentTime + .5); } catch (e) { /* no sound */ }
 }
 function newDraft(dayId, past) {
-  const tr = trainCfg(), d = planDay(tr, dayId), ws = workouts();
+  const tr = trainCfg(), d = planDay(tr, dayId), ws = gymWorkouts();
   return {
     date: today(), dayId: d ? d.id : '', name: d ? d.name : 'Workout', started: Date.now(), past: !!past,
     ex: (d ? d.ex : []).map(x => draftEx(x, ws)),
@@ -919,7 +1240,7 @@ function draftEx(x, ws) {
 function openWorkout(opt) {
   let wo = opt.resume ? loadDraft() : null;
   if (!wo) { wo = newDraft(opt.dayId, opt.past); saveDraft(wo); }
-  const ws = workouts();
+  const ws = gymWorkouts();
   const ov = h('div.ov.full');
   const close = () => { clearInterval(tick); ov.remove(); render(); };
   const store = () => saveDraft(wo);
@@ -993,9 +1314,11 @@ function openWorkout(opt) {
 }
 function openWorkoutDetail(w) {
   modal(w.data.name, close => h('div', null,
-    h('div.small.muted', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + (w.data.min ? ' · ' + w.data.min + ' min' : '') + ' · ' + setCount(w) + ' sets · ' + Math.round(volume(w)).toLocaleString('en-US') + ' kg'),
-    h('div.list', null, (w.data.ex || []).map(x => h('div.item', null, h('div.grow', null, h('div.t1', null, x.n), h('div.t2', null, setsTxt(x.s)))))),
-    h('div.btns', null, h('button.btn.red', { onclick: async () => { if (!confirm('Delete this workout?')) return; if (await act(() => api('logDelete', w.id), 'Workout deleted')) close(); } }, 'Delete workout'))));
+    h('div.small.muted', null, DAYS[dow(w.date)] + ', ' + shortDate(w.date) + ' · ' + wDesc(w) + (isSport(w) ? '' : ' · ' + Math.round(volume(w)).toLocaleString('en-US') + ' kg')),
+    isSport(w) ? h('div.list', null,
+      h('div.item', null, h('div.grow', null, h('div.t1', null, sportName(w.data.sport)), h('div.t2', null, [w.data.effort ? 'Effort: ' + w.data.effort : '', w.data.hr ? 'Avg HR ' + w.data.hr : '', w.data.note || ''].filter(Boolean).join(' · ')))))
+      : h('div.list', null, (w.data.ex || []).map(x => h('div.item', null, h('div.grow', null, h('div.t1', null, x.n), h('div.t2', null, setsTxt(x.s)))))),
+    h('div.btns', null, h('button.btn.red', { onclick: async () => { if (!confirm('Delete this session?')) return; if (await act(() => api('logDelete', w.id), 'Deleted')) close(); } }, 'Delete'))));
 }
 
 // ---------- service worker ----------

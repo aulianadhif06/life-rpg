@@ -2,7 +2,7 @@
 // state yang bisa "nyasar": edit transaksi lama → HP/XP ikut menyesuaikan.
 import { isFree, catLabel, addDays, daysBetween, cycleOf, cycleEnd, addMonthKey } from './fin.js';
 import { BOSSES } from './sprites.js';
-import { sessionOn, prsIn, wdOf } from './train.js';
+import { sessionsOn, prsIn, wdOf, isSport, targets, weightAvg } from './train.js';
 
 export const RULES = {
   hpMax: 100,
@@ -14,6 +14,7 @@ export const RULES = {
   streak: { every: 7, xp: 50, gold: 50 },
   boss: { ratio: 0.6, xp: 250, gold: 120, escapeHp: -10 },
   challenge: { xp: 200, gold: 100, acceptDays: 7, share: 0.2 },
+  protein: { xp: 15, gold: 5 },
   gym: { xp: 25, gold: 10, hp: 5, prXp: 15, prMax: 3, missed: -8, weekXp: 60, weekGold: 30 },
   reviveDays: 3, reviveHp: 40, sick: 30, tired: 60,
 };
@@ -143,7 +144,7 @@ export function compute(data, game, today) {
 
   // Training: workouts by day (in the order they were logged) and excused rest days.
   const train = game.train && game.train.plan ? game.train : null;
-  const wByDay = {}, restDays = new Set(), allW = [];
+  const wByDay = {}, restDays = new Set(), allW = [], mealDays = {};
   (data.journal || []).forEach(j => {
     if (j.kind === 'workout') (wByDay[j.date] = wByDay[j.date] || []).push(j);
     if (j.kind === 'rest') restDays.add(j.date);
@@ -179,11 +180,12 @@ export function compute(data, game, today) {
       if ((closed || !Q.eod) && questDone(q, day, allowance)) gain(d, 'Quest complete: ' + Q.name, Q.xp, Q.gold, 0, 'quest');
     });
 
-    if (train) {
-      const sess = sessionOn(train, d);
-      if (sess && !restDays.has(d)) { pending.push({ date: d, name: sess.name }); wk.sched++; }
+    {
+      if (train && !restDays.has(d)) sessionsOn(train, d).forEach(sess => { pending.push({ date: d, name: sess.name, type: sess.type }); wk.sched++; });
       (wByDay[d] || []).forEach(w => {
-        const p = pending.shift();
+        const kind = isSport(w) ? 'sport' : 'gym';
+        const pi = pending.findIndex(x => (x.type || 'gym') === kind);
+        const p = pi >= 0 ? pending.splice(pi, 1)[0] : null;
         const name = w.data.name || (p && p.name) || 'Workout';
         gain(d, (p ? 'Workout done: ' : 'Bonus workout: ') + name, RULES.gym.xp, RULES.gym.gold, S.ko ? 0 : RULES.gym.hp, 'gym');
         prsIn(w, allW).slice(0, RULES.gym.prMax).forEach(pr => gain(d, 'New PR: ' + pr.n + (pr.kg ? ' ' + pr.kg + ' kg × ' + pr.reps : ' ' + pr.reps + ' reps'), RULES.gym.prXp, 0, 0, 'pr'));
@@ -197,6 +199,10 @@ export function compute(data, game, today) {
           wk = { sched: 0, done: 0, miss: 0 };
         }
       }
+    }
+    if (closed && game.body && mealDays[d]) {
+      const tg = targets(game.body, weightAvg(data.journal, d));
+      if (tg && mealDays[d].p >= tg.protein) gain(d, 'Protein goal hit (' + Math.round(mealDays[d].p) + ' g)', RULES.protein.xp, RULES.protein.gold, 0, 'protein');
     }
     if (!closed) continue;
 
