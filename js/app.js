@@ -2,9 +2,10 @@ import { api, auth, cached } from './api.js';
 import { CONNECT_URL } from './config.js';
 import { SCENES, sceneCanvas } from './scenes.js';
 import { lockOn, lockState, lockSupported, enableLock, unlock, disableLock, wipeLock, relock, RELOCK_MS } from './lock.js';
-import { compute, RULES } from './game.js';
+import { compute, RULES, CH_DEFS } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
 import { kindOf, energyDay, EX, WEEKDAYS, SPLIT_TXT, SPORTS, EFFORT, FOODS, ACTIVITY, GOALS, sportKcal, isSport, targets, weightAvg, latestWeight, sessionsOn, schedIds, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
+import { GOAL_TYPES, goalImage } from './sprites.js';
 import { avatarCanvas, avatarOf, DEFAULT_AVATAR, HAIRS, TOPS, BOTTOMS, SKIN_TONES, HAIR_COLORS, swatch } from './hero.js';
 import {
   EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
@@ -493,17 +494,88 @@ function viewArena() {
   const tips = advice(a);
   if (tips.length) out.push(panel('Advisor', null, tips.slice(0, 4).map(x => h('p.small', { style: 'margin:0 0 8px' }, '▸ ' + x))));
 
-  const ch = g.challenges, share = Math.round((gameCfg().share ?? RULES.challenge.share) * 100);
-  out.push(panel('Challenges', share + '% of savings as reward',
-    h('p.small.muted', null, 'Accept a challenge in the first ' + RULES.challenge.acceptDays + ' days of a cycle. Win it for +' + RULES.challenge.xp + ' XP, +' + RULES.challenge.gold + ' G, and ' + share + '% of the money you saved goes into your reward fund to spend guilt-free.'),
-    ch.accepted.map(c => h('div.quest', null, h('div.tick', null, iconCanvas('sword', 2)),
-      h('div.grow', null, h('div.q-name', null, catLabel(c.cat) + ' ≤ ' + rp(c.limit)), bar(c.used / c.limit, c.used > c.limit ? 'bad thin' : 'thin'),
-        h('div.small.muted', null, 'Spent ' + rp(c.used) + (c.used > c.limit ? ' · failed' : ' · ' + rp(c.limit - c.used) + ' left'))))),
-    ch.offers.map(o => h('div.quest', null, h('div.tick', null, iconCanvas('bolt', 2)),
-      h('div.grow', null, h('div.q-name', null, catLabel(o.cat) + ' ≤ ' + rp(o.limit)), h('div.small.muted', null, 'Budget ' + rp(o.budget) + ' · save ' + rp(o.budget - o.limit))),
-      h('button.btn.sm.gold', { onclick: () => act(() => api('logAdd', [{ date: today(), kind: 'challenge', data: { cycle: g.boss.key, cat: o.cat, limit: o.limit } }]), 'Challenge accepted!') }, 'Accept'))),
-    !ch.accepted.length && !ch.offers.length ? h('div.empty', null, ch.partial ? 'Challenges open at the start of next cycle. This one was already running when you started playing.' : ch.open ? 'No challenges to offer right now.' : 'Sign-ups for this cycle are closed. New challenges arrive next payday.') : null));
+  out.push(challengesPanel());
   return h('div', null, out);
+}
+// ---------- CHALLENGES ----------
+const CH = RULES.ch;
+const CH_META = { cut: { icon: 'sword', name: c => 'Cut ' + catLabel(c.cat), desc: c => 'Keep ' + catLabel(c.cat) + ' at or under the limit until payday.' } };
+Object.entries(CH_DEFS).forEach(([k, D]) => { CH_META[k] = { icon: D.icon, name: D.name, desc: c => D.desc(c || {}) }; });
+const rewardTxt = (t, tier) => { const r = t === 'cut' ? CH.cut.tiers[tier || 'normal'] : CH_DEFS[t]; return '+' + r.xp + ' XP · +' + r.gold + ' G' + (t === 'cut' || t === 'homecook' ? ' · fund share' : '') + (r.hp ? ' · lose: ' + r.hp + ' HP' : ''); };
+const lastSalary = () => (S.data.txns || []).filter(t => t.type === 'in' && /gaji/i.test(t.category) && daysBetween(t.date, today()) <= 40).sort((a, b) => a.date < b.date ? 1 : -1)[0];
+const foodBaseline = () => Math.round((S.data.txns || []).filter(t => t.type === 'out' && t.category === 'Makan & minum' && t.date < today() && daysBetween(t.date, today()) <= 28).reduce((s, t) => s + t.amount, 0) / 4);
+
+function challengesPanel() {
+  const g = S.g, ch = g.challenges, share = Math.round((gameCfg().share ?? RULES.challenge.share) * 100);
+  const activeCard = a => {
+    const M = CH_META[a.type], p = a.progress || {};
+    let pct = 0, line = '', bad = false;
+    if (a.type === 'cut') { pct = a.used / a.limit; bad = a.used > a.limit; line = 'Spent ' + rp(a.used) + ' of ' + rp(a.limit) + (bad ? ' · failed' : ''); }
+    if (a.type !== 'cut') {
+      const D = CH_DEFS[a.type] || {};
+      if (a.type === 'payfirst') { pct = p.need ? p.val / p.need : 0; line = rp(p.val) + ' of ' + rp(p.need) + ' moved to savings'; }
+      else if (a.type === 'fitfrugal') { pct = p.val / p.need; bad = p.miss > 0; line = p.val + ' of ' + p.need + ' days in budget' + (p.miss ? ' · ' + p.miss + ' missed session' : ''); }
+      else if (a.type === 'ironweek') { pct = 1 - (a.daysLeft - 1) / D.days; bad = p.miss > 0; line = bad ? p.miss + ' missed session: failed' : 'No missed sessions so far'; }
+      else if (D.kind === 'count' || D.kind === 'sum') { pct = p.val / p.need; line = p.val + ' of ' + p.need + ' done'; }
+      else if (D.kind === 'cap') { pct = p.val / p.cap; bad = p.val > p.cap; line = rp(p.val) + ' of ' + rp(p.cap) + (bad ? ' · failed' : ''); }
+      else if (D.kind === 'clean') { pct = 1 - (a.daysLeft - 1) / D.days; bad = p.val > 0; line = bad ? 'Broken: failed' : 'Clean so far'; }
+    }
+    return h('div.quest.chal', null, h('div.tick', null, iconCanvas(M.icon, 2)),
+      h('div.grow', null, h('div.q-name', null, M.name(a) + (a.tier && a.type === 'cut' ? ' · ' + a.tier : '')), bar(Math.min(1, pct), bad ? 'bad thin' : 'thin'),
+        h('div.small.muted', null, line + (a.daysLeft != null ? ' · ' + a.daysLeft + (a.daysLeft === 1 ? ' day left' : ' days left') : ''))),
+      h('div.q-rew', null, rewardTxt(a.type, a.tier).split(' · ').slice(0, 2).join('\n')));
+  };
+  const offerCard = o => {
+    const M = CH_META[o.type];
+    if (o.type === 'cut') {
+      const tiers = Object.entries(CH.cut.tiers).map(([k, t]) => [k, Math.max(10000, Math.floor(o.base * t.f / 10000) * 10000)]);
+      let pick = 'normal';
+      const box = h('div');
+      const paint = () => {
+        const lim = tiers.find(t => t[0] === pick)[1];
+        box.replaceChildren(
+          h('div.chips', null, tiers.map(([k, l]) => h('button' + (pick === k ? '.on' : ''), { type: 'button', onclick: () => { pick = k; paint(); } }, k[0].toUpperCase() + k.slice(1) + ' ' + rpShort(l)))),
+          h('div.small.muted', null, 'Budget ' + rp(o.budget) + ' · last cycle ' + rp(o.base) + ' · ' + rewardTxt('cut', pick)),
+          h('div.btns', null, h('button.btn.sm.gold', { onclick: () => acceptChallenge({ type: 'cut', cycle: o.cycle, cat: o.cat, tier: pick, limit: lim }) }, 'Accept')));
+      };
+      paint();
+      return h('div.offer', null, h('div.row', null, iconCanvas(M.icon, 3), h('div.grow', null, h('div.t1', null, M.name(o)), h('div.small.muted', null, M.desc(o)))), box);
+    }
+    if (o.type === 'payfirst') {
+      const sal = lastSalary();
+      let pct = 20;
+      const box = h('div');
+      const paint = () => {
+        const amt = sal ? Math.round(sal.amount * pct / 100 / 10000) * 10000 : 0;
+        box.replaceChildren(h('div.chips', null, [10, 20, 30].map(p => h('button' + (pct === p ? '.on' : ''), { type: 'button', onclick: () => { pct = p; paint(); } }, p + '%'))),
+          h('div.small.muted', null, sal ? 'Salary ' + rp(sal.amount) + ' on ' + shortDate(sal.date) + ' → move ' + rp(amt) + ' · ' + rewardTxt('payfirst') : 'Log your salary (Income → Salary) first so the target can be set.'),
+          sal ? h('div.btns', null, h('button.btn.sm.gold', { onclick: () => acceptChallenge({ type: 'payfirst', pct, amount: amt, start: o.cycleStart, end: addDays(o.cycleStart, CH.payfirst.days - 1) }) }, 'Accept')) : null);
+      };
+      paint();
+      return h('div.offer', null, h('div.row', null, iconCanvas(M.icon, 3), h('div.grow', null, h('div.t1', null, M.name(o)), h('div.small.muted', null, M.desc({ pct })))), box);
+    }
+    const days = CH_DEFS[o.type].days;
+    return h('div.offer', null, h('div.row', null, iconCanvas(M.icon, 3), h('div.grow', null, h('div.t1', null, M.name(o)), h('div.small.muted', null, M.desc(o)),
+      h('div.small.muted', null, days + ' days from the day you accept · ' + rewardTxt(o.type)),
+      o.until ? h('div.small.muted', null, 'Offer open until ' + DAYS[dow(o.until)] + ', ' + shortDate(o.until) + '.') : null)),
+      h('div.btns', null, h('button.btn.sm.gold', { onclick: () => acceptChallenge({ type: o.type, start: today(), end: addDays(today(), days - 1), base: o.type === 'homecook' ? foodBaseline() : undefined, cat: o.cat, cap: o.cap }) }, 'Accept')));
+  };
+  const recent = ch.recent.length ? h('div', null, h('div.glab', null, 'Recent results'), h('div.list', null, ch.recent.map(r => h('div.item', null,
+    h('div.grow', null, h('div', null, CH_META[r.type].name(r)), h('div.t2', null, shortDate(r.date) + (r.fund ? ' · fund +' + rp(r.fund) : ''))),
+    h('b.' + (r.result === 'win' ? 'green' : 'red'), null, r.result === 'win' ? 'WON' : 'MISSED'))))) : null;
+  return panel('Challenges', ch.active.length + '/' + CH.maxActive + ' active',
+    h('p.small.muted', null, 'Each Monday 3 challenges are drawn at random, plus budget cuts after payday, with more backups below. Nothing starts until you accept it; up to ' + CH.maxActive + ' at a time. Budget cuts can be accepted in the first ' + RULES.challenge.acceptDays + ' days after payday. Wins with a fund share put ' + share + '% of the money saved into your reward fund.'),
+    ch.active.length ? [h('div.glab', null, 'Active'), ch.active.map(activeCard)] : null,
+    ch.offers.length ? [h('div.glab', null, 'This week\'s picks'), ch.offers.map(offerCard)] : h('div.empty', null, ch.room ? 'This week\'s picks are taken. Try one from the list below, or wait for Monday.' : 'You have ' + CH.maxActive + ' active challenges. Finish one to take another.'),
+    ch.room && ch.backups && ch.backups.length ? h('details.more', null, h('summary', null, 'More challenges (' + ch.backups.length + ')'),
+      h('p.small.muted', null, 'Backup challenges if this week\'s picks don\'t suit you. Same rewards.'),
+      ['money', 'health'].map(gp => { const xs = ch.backups.filter(o => (CH_DEFS[o.type] || {}).group === gp); return xs.length ? [h('div.glab', null, gp === 'money' ? 'Money' : 'Training & body'), xs.map(offerCard)] : null; })) : null,
+    recent);
+}
+function acceptChallenge(data) {
+  const name = CH_META[data.type].name(data);
+  if (data.tier === 'hard' && !confirm('Hard challenge: losing it costs ' + -CH.cut.tiers.hard.hp + ' HP. Accept?')) return;
+  logAddFast([{ date: today(), kind: 'challenge', data }], 'Challenge accepted: ' + name);
 }
 function closeCard(p) {
   const to = h('select.in', null, acctOptions(null, a => a.kind === 'tabungan' || a.kind === 'investasi'));
@@ -549,22 +621,8 @@ function viewHarta() {
   out.push(panel('Net worth', null, h('div.big-num.num', null, rp(nw.nw)),
     h('div.kv', null, h('span.muted', null, 'Assets'), h('span.num', null, rp(nw.assets))),
     h('div.kv', null, h('span.muted', null, 'Card debt'), h('span.num.red', null, rp(nw.debt)))));
-  out.push(panel('Reward fund', null,
-    h('div.row', null, iconCanvas('chest', 4), h('div.grow', null, h('div.big-num.num.gold', null, rp(g.fund)),
-      h('div.small.muted', null, 'Earned from challenges. Spend it on anything; it doesn\'t touch your budget.'))),
-    g.fund > 0 ? h('div.btns', null, h('button.btn.gold', { onclick: openUseFund }, 'Spend')) : null));
-  const goals = (d.goals || []).filter(x => x.show);
-  if (goals.length) out.push(panel('Garage & goals', null, goals.map(x => {
-    const cur = goalProgress(x, d.accounts, bal, d.txns), pct = x.target ? cur / x.target : 0;
-    const monthsLeft = x.targetDate ? Math.max(1, Math.ceil(daysBetween(today(), x.targetDate) / 30.4)) : null;
-    const need = monthsLeft ? Math.max(0, Math.ceil((x.target - cur) / monthsLeft / 10000) * 10000) : null;
-    return h('div', { style: 'margin-bottom:14px' },
-      h('div.row.between', null, h('b', null, x.name), h('span.small.num', null, Math.round(pct * 100) + '%')),
-      /mobil|car|ferio|civic/i.test(x.name) ? h('div.goal-car', null, carCanvas(pct, 8)) : null,
-      bar(pct, 'seg'),
-      h('div.kv', null, h('span.muted', null, rp(cur) + ' / ' + rp(x.target)), h('span.muted', null, x.targetDate ? 'by ' + shortDate(x.targetDate) + ' ' + x.targetDate.slice(0, 4) : '')),
-      need != null ? h('div.small.muted', null, 'About ' + rp(need) + ' a month keeps you on schedule.') : null);
-  })));
+  out.push(rewardPanel());
+  out.push(goalsPanel());
   out.push(panel('Accounts', null, ['harian', 'tabungan', 'investasi', 'kredit'].map(k => {
     const list = d.accounts.filter(a => a.kind === k);
     if (!list.length) return null;
@@ -578,6 +636,102 @@ function viewHarta() {
       })));
   })));
   return h('div', null, out);
+}
+// ---------- REWARD FUND (backed by real money in a pocket) ----------
+const fundMoved = () => (S.data.txns || []).filter(t => t.type === 'tf' && t.src === 'rewardmove').reduce((s, t) => s + t.amount, 0);
+function rewardPanel() {
+  const g = S.g, moved = fundMoved(), toMove = Math.max(0, g.fundEarned - moved);
+  return panel('Reward fund', 'from challenges',
+    h('div.row', null, iconCanvas('chest', 4), h('div.grow', null, h('div.big-num.num.gold', null, rp(g.fund)), h('div.small.muted', null, 'Yours to spend guilt-free. Spending it never touches your budget.'))),
+    h('div.kv', { style: 'margin-top:8px' }, h('span.muted', null, 'Earned from wins'), h('span.num', null, rp(g.fundEarned))),
+    h('div.kv', null, h('span.muted', null, 'Set aside in your reward pocket'), h('span.num', null, rp(moved))),
+    toMove > 0 ? h('div.callout.warn', { style: 'margin-top:8px' }, h('b', null, rp(toMove) + ' not set aside yet'), h('div.small', null, 'Move it into a separate pocket (for example a Jago pocket called "Reward") so the fund is real money you can see.')) : null,
+    h('div.btns', null,
+      toMove > 0 ? h('button.btn.gold', { onclick: () => openMoveFund(toMove) }, 'Move ' + rpShort(toMove) + ' to pocket') : null,
+      g.fund > 0 ? h('button.btn' + (toMove > 0 ? '.ghost' : '.gold'), { onclick: openUseFund }, 'Spend') : null));
+}
+function openMoveFund(amount) {
+  const pocket = (() => { try { return localStorage.getItem('lrpg.pocket'); } catch (e) { return null; } })();
+  modal('Set aside reward money', close => {
+    const amt = h('input.in.big', { inputmode: 'decimal', value: String(amount) });
+    const from = h('select.in', null, acctOptions(null, a => a.kind === 'harian'));
+    const to = h('select.in', null, acctOptions(pocket, a => a.kind !== 'kredit'));
+    const err = h('div.err');
+    return h('div', null, h('p.small.muted', null, 'Logs a transfer to your reward pocket. Do the same transfer in your bank app.'),
+      h('label.f', null, 'Amount'), amt, h('label.f', null, 'From'), from, h('label.f', null, 'To (your reward pocket)'), to, err,
+      h('div.btns', null, h('button.btn.gold.block', { onclick: () => {
+        const n = parseAmount(amt.value);
+        if (!(n > 0)) { err.textContent = 'Enter an amount.'; return; }
+        if (from.value === to.value) { err.textContent = 'Pick a different pocket.'; return; }
+        try { localStorage.setItem('lrpg.pocket', to.value); } catch (e) { /* ignore */ }
+        close(); addTxnsFast([{ type: 'tf', amount: n, account: from.value, toAccount: to.value, category: '', date: today(), note: 'Reward fund', src: 'rewardmove' }], 'Set aside ' + rp(n));
+      } }, 'Log transfer')));
+  });
+}
+
+// ---------- GOALS ----------
+const goalsMeta = () => gameCfg().goalsMeta || {};
+const guessType = name => /mobil|car|ferio|civic/i.test(name) ? 'car' : /motor/i.test(name) ? 'moto' : /rumah|house|kpr/i.test(name) ? 'house' : /trip|travel|liburan|jalan/i.test(name) ? 'travel' : /darurat|emergency/i.test(name) ? 'emergency' : /nikah|wedding/i.test(name) ? 'wedding' : /kuliah|sekolah|edu|course/i.test(name) ? 'education' : /invest|saham|reksa/i.test(name) ? 'invest' : /hp|laptop|iphone|kamera|gadget/i.test(name) ? 'gadget' : /tabung|saving|nabung/i.test(name) ? 'savings' : 'custom';
+function goalsPanel() {
+  const d = S.data, bal = balances(d.accounts, d.txns), meta = goalsMeta();
+  const goals = (d.goals || []).filter(x => x.show);
+  const newMs = {};
+  const cards = goals.map(x => {
+    const m = meta[x.id] || {}, type = m.type || guessType(x.name);
+    const cur = goalProgress(x, d.accounts, bal, d.txns), pct = x.target ? cur / x.target : 0;
+    const monthsLeft = x.targetDate ? Math.max(1, Math.ceil(daysBetween(today(), x.targetDate) / 30.4)) : null;
+    const need = monthsLeft ? Math.max(0, Math.ceil((x.target - cur) / monthsLeft / 10000) * 10000) : null;
+    const hit = [25, 50, 75, 100].filter(p => pct * 100 >= p && !(m.ms || []).some(z => z.pct === p));
+    if (hit.length) newMs[x.id] = { ...m, type, name: x.name, ms: [...(m.ms || []), ...hit.map(p => ({ pct: p, date: today() }))] };
+    return h('button.goal.plain', { onclick: () => openGoalEditor(x) },
+      h('div.goal-stage', null, goalImage(type, pct, 3)),
+      h('div.row.between', null, h('b', null, x.name), h('span.small.num', null, Math.round(pct * 100) + '%')),
+      m.why ? h('div.small.muted', { style: 'margin:2px 0 6px' }, '“' + m.why + '”') : null,
+      bar(pct, 'seg'),
+      h('div.kv', null, h('span.muted', null, rp(cur) + ' / ' + rp(x.target)), h('span.muted', null, x.targetDate ? 'by ' + shortDate(x.targetDate) + ' ' + x.targetDate.slice(0, 4) : '')),
+      need != null ? h('div.small.muted', null, pct >= 1 ? 'Goal reached!' : 'About ' + rp(need) + ' a month keeps you on schedule.') : null,
+      h('div.ms', null, [25, 50, 75, 100].map(p => h('span' + (pct * 100 >= p ? '.on' : ''), null, p + '%'))));
+  });
+  if (Object.keys(newMs).length) setTimeout(() => { saveGame({ goalsMeta: { ...goalsMeta(), ...newMs } }).then(ok => ok && toast('Goal milestone reached!')); }, 300);
+  return panel('Goals', goals.length ? goals.length + '' : '',
+    cards.length ? cards : h('div.empty', null, 'No goals yet. Add what you\'re saving for: a car, a trip, a house, an emergency fund…'),
+    h('div.btns', null, h('button.btn.gold', { onclick: () => openGoalEditor(null) }, '+ New goal')),
+    h('p.small.muted', null, 'Each goal grows its picture as you save. Milestones at 25/50/75% give +40 XP, reaching 100% gives +150 XP.'));
+}
+function openGoalEditor(g0) {
+  const meta = g0 ? (goalsMeta()[g0.id] || {}) : {};
+  const st = { name: g0 ? g0.name : '', type: meta.type || (g0 ? guessType(g0.name) : 'custom'), target: g0 ? String(g0.target) : '', date: g0 ? g0.targetDate || '' : '', why: meta.why || '',
+    src: Object.fromEntries((g0 ? g0.sources : []).map(x => [x.acct, x.pct])) };
+  modal(g0 ? 'Edit goal' : 'New goal', close => {
+    const body = h('div'), err = h('div.err');
+    const accs = S.data.accounts.filter(a => a.kind !== 'kredit');
+    const paint = () => body.replaceChildren(
+      h('div.goal-stage', { style: 'margin-bottom:10px' }, goalImage(st.type, 1, 3)),
+      h('label.f', null, 'What are you saving for?'), h('input.in', { value: st.name, maxlength: 40, placeholder: 'e.g. Civic Ferio 97, Bali trip, emergency fund', oninput: e => { st.name = e.target.value; } }),
+      h('label.f', null, 'Type (sets the picture)'), h('div.chips', null, GOAL_TYPES.map(([k, l]) => h('button' + (st.type === k ? '.on' : ''), { type: 'button', onclick: () => { st.type = k; paint(); } }, l))),
+      h('div.grid2', null,
+        h('div', null, h('label.f', null, 'Target amount'), h('input.in', { inputmode: 'decimal', value: st.target, placeholder: 'e.g. 70jt', oninput: e => { st.target = e.target.value; } })),
+        h('div', null, h('label.f', null, 'Target date'), h('input.in', { type: 'date', value: st.date, oninput: e => { st.date = e.target.value; } }))),
+      h('label.f', null, 'Why it matters (optional)'), h('input.in', { value: st.why, maxlength: 80, placeholder: 'e.g. my first car, manual, light mods', oninput: e => { st.why = e.target.value; } }),
+      h('label.f', null, 'Money that counts toward it'),
+      h('div.list', null, accs.map(a => h('div.item', null,
+        h('label.row.grow', null, h('input', { type: 'checkbox', checked: st.src[a.id] != null, onchange: e => { if (e.target.checked) st.src[a.id] = 100; else delete st.src[a.id]; paint(); } }), a.name),
+        st.src[a.id] != null ? h('div.row', null, h('input.in.sm', { inputmode: 'numeric', value: st.src[a.id], oninput: e => { st.src[a.id] = e.target.value; } }), h('span.small.muted', null, '%')) : null))));
+    paint();
+    return h('div', null, body, err, h('div.btns', null,
+      h('button.btn.gold.block', { onclick: async () => {
+        const target = parseAmount(st.target), sources = Object.entries(st.src).map(([acct, pct]) => ({ acct, pct: Math.max(1, Math.min(100, Number(pct) || 100)) }));
+        if (!st.name.trim()) { err.textContent = 'Name your goal.'; return; }
+        if (!(target > 0)) { err.textContent = 'Enter a target amount.'; return; }
+        if (!sources.length) { err.textContent = 'Pick at least one account that counts toward it.'; return; }
+        const ok = await act(() => api('saveGoal', { id: g0 ? g0.id : undefined, name: st.name.trim(), target, targetDate: st.date, monthly: g0 ? g0.monthly : 0, sources, show: true }));
+        if (!ok) return;
+        const saved = g0 || (S.data.goals || []).find(x => x.name === st.name.trim());
+        if (saved) await saveGame({ goalsMeta: { ...goalsMeta(), [saved.id]: { ...(goalsMeta()[saved.id] || {}), type: st.type, why: st.why.trim(), name: st.name.trim() } } });
+        toast('Goal saved'); close();
+      } }, 'Save goal'),
+      g0 ? h('button.btn.red', { onclick: async () => { if (!confirm('Delete "' + g0.name + '"? Your money isn\'t touched.')) return; if (await act(() => api('deleteGoal', g0.id), 'Goal deleted')) close(); } }, 'Delete') : null));
+  });
 }
 function openUseFund() {
   const g = S.g;

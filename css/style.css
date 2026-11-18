@@ -273,3 +273,14 @@ main { padding-bottom: calc(170px + var(--safe-b)); }
 :root[data-theme="light"] .quest .q-rew { color: #a86400; }
 :root[data-theme="light"] .cyan, :root[data-theme="light"] .ev .fx .cyan { color: #1f6fb2; }
 :root[data-theme="light"] .ev .d { color: #6b7c8c; }
+
+/* challenges & goals */
+.offer { background: var(--panel2); padding: 10px; margin-top: 8px; }
+.offer .t1 { font-weight: 700; }
+.quest.chal .q-rew { white-space: pre-line; }
+button.goal { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 0 0 14px; margin-bottom: 12px; border-bottom: 2px dashed var(--line); cursor: pointer; color: inherit; }
+.goal-stage { background: var(--deep); padding: 12px; display: flex; justify-content: center; margin: 4px 0 8px; }
+.ms { display: flex; gap: 6px; margin-top: 6px; } .ms span { font-size: 11px; padding: 2px 6px; background: var(--panel2); color: var(--g); } .ms span.on { background: var(--L); color: var(--k); }
+
+details.more { margin-top: 12px; } details.more summary { cursor: pointer; padding: 10px; background: var(--panel2); font-weight: 700; list-style: none; }
+details.more summary::-webkit-details-marker { display: none; } details.more summary::after { content: ' ▾'; color: var(--g); }

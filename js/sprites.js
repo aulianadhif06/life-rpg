@@ -130,3 +130,82 @@ export function iconCanvas(name, scale = 2, cls = '') {
   drawRows(ctx, rows, {}, 0, 0, scale);
   return c;
 }
+
+// ---------- goal art: the picture fills in with colour as the goal progresses ----------
+// letters map to PAL colours; 'k' outline. dir: 'x' fills left→right, 'y' fills bottom→top.
+const GOAL_ART = {
+  car: { dir: 'x', rows: CAR },
+  moto: { dir: 'x', rows: [
+    '..........kk..........', '.........kggk.........', '....kkkkkkkkkk........', '...kcccccccccck.kkk...',
+    '..kcccccccccccckcyk...', '.kkkkcccckkkkccccck...', 'kwwwkkcckkwwwkkckk....', 'kwkwk.kk.kwkwk........',
+    '.kkk......kkk.........' ] },
+  house: { dir: 'y', rows: [
+    '.........kk.........', '........kook........', '......kkookkk.......', '.....koooooook......',
+    '....koooooooook.....', '...kooooooooooook...', '..kkkkkkkkkkkkkkkk..', '...kwwwwwwwwwwwwk...',
+    '...kwkkkwwwwkkkwk...', '...kwkCkwwwwkCkwk...', '...kwkkkwwwwkkkwk...', '...kwwwwwkkwwwwwk...',
+    '...kwwwwwkywwwwwk...', '...kwwwwwkkwwwwwk...', '..kkkkkkkkkkkkkkkk..' ] },
+  travel: { dir: 'x', rows: [
+    '.............kk.......', '............kcck......', '...........kccck......', 'kk........kcccck......',
+    'kck.kkkkkkkccccckkkkk.', 'kcckwwwwwwwwwwwwwwwwwk', '.kkkwCwCwCwCwCwwwwwwkk', '...kkkkkkkkccccckkkkk..',
+    '.........kccck........', '........kcck..........', '........kkk...........' ] },
+  gadget: { dir: 'y', rows: [
+    '..kkkkkkkkk..', '.kdddddddddk.', '.kdCCCCCCCdk.', '.kdCcccccCdk.', '.kdCcwcccCdk.', '.kdCccccc Cdk.'.replace(' ', ''),
+    '.kdCcccccCdk.', '.kdCccccwCdk.', '.kdCCCCCCCdk.', '.kddddkddddk.', '.kdddkykdddk.', '.kddddkddddk.', '..kkkkkkkkk..' ] },
+  emergency: { dir: 'y', rows: [
+    '.kkkkkkkkkkk.', 'kLLLLLLLLLLLk', 'kLlllllllllLk', 'kLlllwwllllLk', 'kLlllwwllllLk', 'kLlwwwwwwllLk',
+    'kLlwwwwwwllLk', 'kLlllwwllllLk', '.kLllwwlllLk.', '.kLlllllllLk.', '..kLlllllLk..', '...kLLLLLk...', '....kkkkk....' ] },
+  wedding: { dir: 'y', rows: [
+    '....kkkkk....', '...kCwCwCk...', '....kCwCk....', '.....kkk.....', '...kkk.kkk...', '..kyyk.kyyk..',
+    '.kyk.....kyk.', '.kyk.....kyk.', '.kyk.....kyk.', '..kyyk.kyyk..', '...kkkkkkk...' ] },
+  education: { dir: 'y', rows: [
+    '......kk......', '....kkddkk....', '..kkddddddkk..', 'kkddddddddddkk', '.kkddddddddkk.', '...kkddddkk.y.',
+    '...kdkkkkdk..y.', '...kddddddk..y.', '....kkkkkk..kyk', '.............k.' ] },
+  invest: { dir: 'x', rows: [
+    '..............kk', '.............kLk', '...........kkLLk', '.......kk.kLLk..', '......kLLkLLk...', '..kk.kLLLLk.....',
+    '.kLLkLLk.kk.....', 'kLLLLLk.........', 'kLLLk...........', 'kkk.............', 'kkkkkkkkkkkkkkkk' ] },
+  custom: { dir: 'y', rows: [
+    '..kkkkkkkkkkkk..', '.kooooooooooook.', 'koooooooooooooook'.slice(0, 16), 'kkkkkkkkkkkkkkkk', 'kooooookkooooook', 'kooooookyyoooook'.slice(0, 16),
+    'kooooookkooooook', 'koooooooooooooook'.slice(0, 16), 'koooooooooooooook'.slice(0, 16), 'kkkkkkkkkkkkkkkk' ] },
+};
+export const GOAL_TYPES = [['car', 'Car'], ['moto', 'Motorbike'], ['house', 'House'], ['travel', 'Travel'], ['gadget', 'Gadget'],
+  ['emergency', 'Emergency fund'], ['wedding', 'Wedding'], ['education', 'Education'], ['invest', 'Investing'], ['savings', 'Savings'], ['custom', 'Other']];
+// Goal pictures from the owner's ChatGPT sheet (assets/goals.png): [x, y, w, h] in the atlas.
+const GOAL_IMG = {"car": [3, 20, 49, 20], "moto": [64, 14, 39, 26], "house": [118, 8, 44, 32], "travel": [173, 15, 45, 25], "gadget": [231, 14, 42, 26], "emergency": [293, 5, 30, 35], "wedding": [11, 51, 34, 29], "education": [64, 45, 39, 35], "invest": [123, 46, 34, 34], "custom": [178, 45, 35, 35], "savings": [235, 46, 34, 34]};
+const GOAL_DIR = { car: 'x', moto: 'x', travel: 'x', gadget: 'x', invest: 'x' };
+let goalSheet = null;
+const loadGoalSheet = () => goalSheet || (goalSheet = new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = 'assets/goals.png'; }));
+/** Goal picture that fills with colour as the goal progresses; the rest is a dim grey silhouette. */
+export function goalImage(type, pct, scale = 3) {
+  const r = GOAL_IMG[type] || GOAL_IMG.custom, [sx, sy, w, h] = r;
+  const c = document.createElement('canvas'); c.width = w * scale; c.height = h * scale; c.className = 'px goal-art';
+  loadGoalSheet().then(im => {
+    if (!im) return;
+    const t = document.createElement('canvas'); t.width = w; t.height = h;
+    const x = t.getContext('2d'); x.drawImage(im, sx, sy, w, h, 0, 0, w, h);
+    const d = x.getImageData(0, 0, w, h), p = Math.max(0, Math.min(1, pct || 0)), horiz = GOAL_DIR[type] === 'x';
+    const cut = horiz ? Math.round(p * w) : Math.round((1 - p) * h);
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+      const filled = horiz ? xx < cut : yy >= cut;
+      if (filled) continue;
+      const i = (yy * w + xx) * 4, g = (d.data[i] * .3 + d.data[i + 1] * .59 + d.data[i + 2] * .11) * .45 + 40;
+      d.data[i] = g; d.data[i + 1] = g + 4; d.data[i + 2] = g + 14;
+    }
+    x.putImageData(d, 0, 0);
+    const o = c.getContext('2d'); o.imageSmoothingEnabled = false; o.drawImage(t, 0, 0, w * scale, h * scale);
+  });
+  return c;
+}
+export function goalArt(type, pct, scale = 6) {
+  const a = GOAL_ART[type] || GOAL_ART.custom, rows = a.rows;
+  const w = Math.max(...rows.map(r => r.length)), hh = rows.length;
+  const [c, ctx] = canvas(w, hh, scale, 'goal-art');
+  const p = Math.max(0, Math.min(1, pct || 0));
+  const ghost = PAL.d;
+  rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === '.' || ch === ' ') return;
+    const filled = a.dir === 'x' ? x < Math.round(p * w) : (hh - 1 - y) < Math.round(p * hh);
+    ctx.fillStyle = ch === 'k' ? (filled ? PAL.k : PAL.G) : filled ? (PAL[ch] || PAL.k) : ghost;
+    ctx.fillRect(x * scale, y * scale, scale, scale);
+  }));
+  return c;
+}
