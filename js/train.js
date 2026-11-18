@@ -237,3 +237,45 @@ export const FOODS = [
   ['Whey protein (1 scoop)', 120, 24], ['Susu UHT (250 ml)', 150, 8], ['Greek yogurt (150 g)', 130, 15], ['Oatmeal (40 g kering)', 150, 5],
   ['Pisang (1 buah)', 105, 1], ['Roti tawar (2 lembar)', 140, 5], ['Selai kacang (1 sdm)', 95, 4], ['Kopi susu gula aren (1 gelas)', 220, 4],
 ];
+
+// ---------- energy balance (calories in vs out) ----------
+export const bmrOf = (body, kg) => {
+  const b = body || {}, w = kg || Number(b.weight) || 0, hgt = Number(b.height) || 0, age = Number(b.age) || 0;
+  if (!w || !hgt || !age) return null;
+  return Math.round(10 * w + 6.25 * hgt - 5 * age + (b.sex === 'female' ? -161 : 5));
+};
+/**
+ * One day's balance. Out = resting + active.
+ *  - Garmin days: resting and active calories from the watch (active already includes activities the watch recorded),
+ *    plus activities logged by hand in the app and any extra active calories entered for that day.
+ *  - Days without Garmin: resting = BMR × 1.2 (covers normal daily movement) + hand-logged activities + extra.
+ *  - Today: resting is projected for the full day (the watch only counts it as the day goes on).
+ */
+export function energyDay(journal, body, date, todayDate) {
+  const J = journal || [];
+  const food = J.filter(j => j.kind === 'meal' && j.date === date).reduce((s, j) => s + (Number(j.data.kcal) || 0), 0);
+  const g = (J.find(j => j.kind === 'daily' && j.date === date) || {}).data || null;
+  const manualAct = J.filter(j => j.kind === 'workout' && j.date === date && j.data && j.data.type === 'sport' && j.data.src !== 'garmin').reduce((s, j) => s + (Number(j.data.kcal) || 0), 0);
+  const extra = J.filter(j => j.kind === 'energy' && j.date === date).reduce((s, j) => s + (Number(j.data.active) || 0), 0);
+  const kg = weightAvg(J, date) || latestWeight(J, date) || Number((body || {}).weight) || 0;
+  const bmr = bmrOf(body, kg);
+  const isToday = date === todayDate;
+  let rest, garminAct = 0, src;
+  if (g && g.kcalRest > 0) {
+    src = 'garmin';
+    garminAct = Number(g.kcalActive) || 0;
+    rest = Number(g.kcalRest);
+    if (isToday) {   // project the full day from the latest complete Garmin day, or BMR
+      const prev = J.filter(j => j.kind === 'daily' && j.date < date && j.data && j.data.kcalRest > 0).sort((a, b) => a.date < b.date ? 1 : -1)[0];
+      rest = Math.max(rest, prev ? Number(prev.data.kcalRest) : (bmr || rest));
+    }
+  } else {
+    if (!bmr) return null;
+    src = 'estimate';
+    rest = Math.round(bmr * 1.2);
+  }
+  const active = garminAct + manualAct + extra;
+  const out = Math.round(rest + active);
+  const goal = (GOALS.find(x => x[0] === (body || {}).goal) || GOALS[0])[2];
+  return { food: Math.round(food), rest: Math.round(rest), garminAct, manualAct, extra, active: Math.round(active), out, goal, target: out + goal, net: Math.round(food - out), src, partial: isToday };
+}

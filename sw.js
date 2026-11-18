@@ -1,6 +1,6 @@
 // Cache-first with background refresh: the app opens instantly from the phone's cache,
 // and a new version (new CACHE name) is downloaded in the background and applied on the next open.
-const CACHE = 'lrpg-v14';
+const CACHE = 'lrpg-v15';
 const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/api.js', 'js/config.js', 'js/fin.js', 'js/game.js', 'js/sprites.js', 'js/hero.js', 'js/hero-data.js', 'js/train.js', 'js/lock.js', 'assets/hero/atlas.png', 'assets/hero/mask.png', 'manifest.webmanifest', 'icons/icon-192.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => fetch(u, { cache: 'reload' }).then(r => r.ok && c.put(u, r))))).then(() => self.skipWaiting()));

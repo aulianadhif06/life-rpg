@@ -3,7 +3,7 @@ import { CONNECT_URL } from './config.js';
 import { lockOn, lockState, lockSupported, enableLock, unlock, disableLock, wipeLock, relock, RELOCK_MS } from './lock.js';
 import { compute, RULES } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
-import { kindOf, EX, WEEKDAYS, SPLIT_TXT, SPORTS, EFFORT, FOODS, ACTIVITY, GOALS, sportKcal, isSport, targets, weightAvg, latestWeight, sessionsOn, schedIds, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
+import { kindOf, energyDay, EX, WEEKDAYS, SPLIT_TXT, SPORTS, EFFORT, FOODS, ACTIVITY, GOALS, sportKcal, isSport, targets, weightAvg, latestWeight, sessionsOn, schedIds, recommend, schedOn, sessionOn, prTable, lastFor, volume, setCount, weekStart, wdOf, fmtRest } from './train.js';
 import { avatarCanvas, avatarOf, DEFAULT_AVATAR, HAIRS, TOPS, BOTTOMS, SKIN_TONES, HAIR_COLORS, swatch } from './hero.js';
 import {
   EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
@@ -43,7 +43,7 @@ function floatText(text, color, i = 0) {
 
 // ---------- state ----------
 const S = { locked: false, data: null, g: null, view: 'home', calMonth: null, calSel: null, busy: false, txSel: null };
-const VIEWS = [['home', 'Home', 'sword'], ['jurnal', 'Journal', 'star'], ['add', '', ''], ['train', 'Health', 'dumbbell'], ['arena', 'Budget', 'shield'], ['harta', 'Vault', 'chest']];
+const VIEWS = [['home', 'Home', 'sword'], ['jurnal', 'Journal', 'star'], ['train', 'Health', 'dumbbell'], ['arena', 'Budget', 'shield'], ['harta', 'Vault', 'chest']];
 const LAST = 'lrpg.last';
 
 const today = () => todayLocal();
@@ -223,7 +223,7 @@ function render() {
   if (S.locked || !S.data || !S.g) return;
   const y = window.scrollY;
   const views = { home: viewHome, jurnal: viewJurnal, train: viewHealth, arena: viewArena, harta: viewHarta };
-  appRoot().replaceChildren(hud(), h('main', null, views[S.view]()), nav());
+  appRoot().replaceChildren(hud(), h('main', null, views[S.view]()), ...nav());
   window.scrollTo(0, y);
 }
 function go(v) { if (v === 'add') return openAdd(); S.view = v; window.scrollTo(0, 0); render(); }
@@ -240,9 +240,8 @@ function hud() {
       h('button.gear', { onclick: openSettings, 'aria-label': 'Settings' }, iconCanvas('gear', 3))));
 }
 function nav() {
-  return h('nav.nav', null, VIEWS.map(([id, label, ico]) => id === 'add'
-    ? h('button.add', { onclick: () => openAdd(), 'aria-label': 'Add transaction' }, h('span.plus', null, '+'), h('span', null, 'Add'))
-    : h('button' + (S.view === id ? '.on' : ''), { onclick: () => go(id) }, iconCanvas(ico, 3), label)));
+  return [h('button.fab', { onclick: () => openAdd(), 'aria-label': 'Add transaction', title: 'Add transaction' }, '+'),
+    h('nav.nav', null, VIEWS.map(([id, label, ico]) => h('button' + (S.view === id ? '.on' : ''), { onclick: () => go(id) }, iconCanvas(ico, 3), label)))];
 }
 const dayLabel = d => DAYS[dow(d)] + ', ' + shortDate(d);
 
@@ -930,17 +929,26 @@ function viewFood() {
     h('button.btn.sm.ghost', { onclick: () => { S.foodDay = addDays(d, -1); render(); }, 'aria-label': 'Previous day' }, '◀'),
     h('b', null, d === t ? 'Today' : dayLabel(d)),
     h('button.btn.sm.ghost', { disabled: d >= t, onclick: () => { S.foodDay = addDays(d, 1); render(); }, 'aria-label': 'Next day' }, '▶'));
-  const sumP = panel('Food', tg ? 'targets from your body stats' : '', nav,
-    tg ? [
-      h('div.kv', null, h('span', null, 'Protein'), h('b.num', null, Math.round(sum.p) + ' / ' + tg.protein + ' g')), bar(sum.p / tg.protein, sum.p >= tg.protein ? '' : 'xp'),
-      h('div.kv', { style: 'margin-top:6px' }, h('span', null, 'Calories'), h('b.num', null, Math.round(sum.kcal).toLocaleString('en-US') + ' / ' + tg.kcal.toLocaleString('en-US') + ' kcal')),
-      bar(sum.kcal / tg.kcal, sum.kcal > tg.kcal * 1.1 ? 'warn' : 'thin'),
-      h('div.small.muted', { style: 'margin-top:6px' }, (sum.p >= tg.protein ? 'Protein goal hit. ' : Math.max(0, tg.protein - Math.round(sum.p)) + ' g protein to go. ') +
-        (burned ? 'Sports burned about ' + burned + ' kcal (not added to your target). ' : '') + 'Hitting protein earns +' + RULES.protein.xp + ' XP at the end of the day.'),
-    ] : h('div.callout', null, h('b', null, 'Add your body stats first'), h('div.small', null, 'Height, age and weight set your daily protein and calorie targets.'),
+  const en = energyDay(S.data.journal, body, d, t);
+  const sumP = panel('Calories', en ? (en.src === 'garmin' ? 'in vs out · Garmin' : 'in vs out · estimate') : '', nav,
+    en && tg ? [
+      h('div.kv', null, h('span', null, 'Eaten'), h('b.num', null, en.food.toLocaleString('en-US') + ' / ' + en.target.toLocaleString('en-US') + ' kcal')),
+      bar(en.food / Math.max(1, en.target), en.food > en.target + RULES.calories.band ? 'warn' : ''),
+      h('div.energy', null,
+        h('div', null, h('span', null, 'Resting' + (en.src === 'garmin' ? (en.partial ? ' (full day, Garmin)' : ' (Garmin)') : ' (BMR estimate)')), h('b.num', null, en.rest.toLocaleString('en-US'))),
+        h('div', null, h('span', null, 'Active' + (en.garminAct ? ' · Garmin ' + en.garminAct : '') + (en.manualAct ? ' · logged ' + en.manualAct : '') + (en.extra ? ' · added ' + en.extra : '')), h('b.num', null, '+' + en.active.toLocaleString('en-US'))),
+        h('div', null, h('span', null, 'Burned (out)'), h('b.num', null, en.out.toLocaleString('en-US'))),
+        h('div', null, h('span', null, (GOALS.find(x => x[0] === body.goal) || GOALS[0])[1]), h('b.num', null, (en.goal >= 0 ? '+' : '') + en.goal)),
+        h('div', null, h('span', null, 'Left to eat'), h('b.num', null, Math.max(0, en.target - en.food).toLocaleString('en-US'))),
+        h('div.tot', null, h('span', null, 'Balance so far'), h('b.num' + (Math.abs(en.net - en.goal) <= RULES.calories.band ? '.green' : ''), null, (en.net >= 0 ? '+' : '') + en.net.toLocaleString('en-US')))),
+      h('div.kv', { style: 'margin-top:10px' }, h('span', null, 'Protein'), h('b.num', null, Math.round(sum.p) + ' / ' + tg.protein + ' g')), bar(sum.p / tg.protein, 'xp'),
+      h('div.small.muted', { style: 'margin-top:6px' }, (en.partial ? 'Today\'s target grows as you move (it includes the active calories burned so far). ' : '') +
+        'Land within ' + RULES.calories.band + ' kcal of your target for +' + RULES.calories.xp + ' XP; hit protein for +' + RULES.protein.xp + ' XP.'),
+      weekBalance(body, t),
+    ] : h('div.callout', null, h('b', null, 'Add your body stats first'), h('div.small', null, 'Height, age and weight set your protein target and the resting-calorie estimate on days without Garmin.'),
       h('div.btns', null, h('button.btn.sm', { onclick: openBodySetup }, 'Add body stats'))),
-    h('div.btns', null, h('button.btn.gold', { onclick: () => openMeal({ date: d }) }, '+ Add meal'),
-      h('button.btn.ghost', { onclick: () => (S.data.foodAi || S.data.scanEnabled) ? snapFood(d) : toast('Photo logging needs ANTHROPIC_API_KEY in Script Properties.', 4000) }, 'Snap a photo')));
+    h('div.btns', null, h('button.btn.gold', { onclick: () => openMeal({ date: d }) }, '+ Add meal'), photoButton(d),
+      h('button.btn.sm.ghost', { onclick: () => openExtraActive(d) }, '+ Active kcal')));
   const listP = panel('Meals', meals.length ? meals.length + '' : '', meals.length ? MEAL_SLOTS.map(([k, l]) => {
     const xs = meals.filter(m => (m.data.slot || 'snack') === k);
     return xs.length ? [h('div.glab', null, l), h('div.list', null, xs.map(m => h('div.item', null, h('div.grow', null, h('div.t1', null, m.data.name), h('div.t2', null, Math.round(m.data.kcal || 0) + ' kcal · ' + Math.round(m.data.p || 0) + ' g protein' + (m.data.src === 'photo' ? ' · from photo' : ''))),
@@ -962,22 +970,48 @@ const FOOD_PROMPT = ['You estimate nutrition from a meal photo for a fitness app
   'Identify each food on the plate with a realistic portion size, then estimate calories and protein. Use typical Indonesian recipes and portions where relevant (e.g. nasi putih 1 piring ≈ 200 g ≈ 260 kcal).',
   'If the photo is not food, return an empty items list. Be conservative and do not invent hidden items.',
   'Reply ONLY with JSON, no other text: {"items":[{"name":"short name in the language usually used for it","portion":"e.g. 1 piring / 150 g","kcal":number,"protein_g":number}],"confidence":"low|medium|high","note":"one short sentence about what is uncertain"}'].join('\n');
-function snapFood(date) {
-  const inp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
-  inp.addEventListener('change', async () => {
-    const f = inp.files && inp.files[0]; inp.remove();
-    if (!f) return;
-    document.body.classList.add('busy'); toast('Reading your meal…', 8000);
-    try {
-      const img = await resizeImage(f);
-      const r = S.data.foodAi ? await api('foodScan', { prompt: FOOD_PROMPT, image: img }) : await api('scanDocument', { prompt: FOOD_PROMPT, images: [img] });
-      const items = (r && r.items || []).filter(x => x && x.name);
-      if (!items.length) { toast('No food found in that photo. Try again or add it by hand.', 4000); return; }
-      openMeal({ date, photo: { items, confidence: r.confidence || 'medium', note: r.note || '' } });
-    } catch (e) { toast('⚠ ' + e.message, 4500); }
-    finally { document.body.classList.remove('busy'); document.querySelectorAll('.toast').forEach(t => t.remove()); }
+async function readFoodPhoto(f, date) {
+  document.body.classList.add('busy');
+  const t = toast('Reading your meal…', 30000);
+  try {
+    const img = await resizeImage(f);
+    const r = S.data.foodAi ? await api('foodScan', { prompt: FOOD_PROMPT, image: img }) : await api('scanDocument', { prompt: FOOD_PROMPT, images: [img] });
+    const items = (r && r.items || []).filter(x => x && x.name && (Number(x.kcal) > 0 || Number(x.protein_g) > 0));
+    if (!items.length) { toast('No food found in that photo. Try again or add it by hand.', 4500); return; }
+    openMeal({ date, photo: { items, confidence: r.confidence || 'medium', note: r.note || '' } });
+  } catch (e) { toast('⚠ Photo not read: ' + e.message, 6000); }
+  finally { document.body.classList.remove('busy'); document.querySelectorAll('.toast').forEach(x => { if (/Reading your meal/.test(x.textContent)) x.remove(); }); }
+}
+function weekBalance(body, t) {
+  const days = [];
+  for (let i = 7; i >= 1; i--) { const dd = addDays(t, -i); const e = energyDay(S.data.journal, body, dd, t); if (e && e.food > 0) days.push(e); }
+  if (days.length < 3) return h('div.small.muted', { style: 'margin-top:6px' }, 'Log food for a few days to see your weekly balance.');
+  const avg = k => Math.round(days.reduce((s, e) => s + e[k], 0) / days.length);
+  const net = avg('net'), perWeek = Math.round(net * 7 / 7700 * 100) / 100;
+  return h('div.callout', { style: 'margin-top:10px' }, h('b', null, 'Last ' + days.length + ' logged days: ' + avg('food').toLocaleString('en-US') + ' in, ' + avg('out').toLocaleString('en-US') + ' out'),
+    h('div.small', null, 'Average balance ' + (net >= 0 ? '+' : '') + net + ' kcal/day, roughly ' + (perWeek >= 0 ? '+' : '') + perWeek + ' kg a week if it held.'),
+    h('div.small.muted', null, 'Food and watch numbers are estimates. Your 7-day weight average is the real judge: adjust the target if it moves faster or slower than planned.'));
+}
+function openExtraActive(date) {
+  modal('Add active calories', close => {
+    const v = h('input.in.big', { inputmode: 'numeric', placeholder: '0' });
+    const note = h('input.in', { maxlength: 60, placeholder: 'e.g. padel without watch' });
+    const err = h('div.err');
+    return h('div', null, h('p.small.muted', null, 'For movement your watch didn\'t record. Activities you log in Training are already counted, so don\'t add them twice.'),
+      h('label.f', null, 'Active calories'), v, h('label.f', null, 'Note'), note, err,
+      h('div.btns', null, h('button.btn.gold.block', { onclick: () => {
+        const k = Math.round(Number(v.value) || 0);
+        if (!(k > 0 && k < 5000)) { err.textContent = 'Enter calories between 1 and 5,000.'; return; }
+        close(); logAddFast([{ date, kind: 'energy', data: { active: k, note: note.value.trim() || undefined } }], '+' + k + ' active kcal');
+      } }, 'Add')));
   });
-  document.body.append(inp); inp.click();
+}
+function photoButton(date) {
+  // A real <label> around the file input: iPhone only opens the camera reliably from a direct tap on the input.
+  const inp = h('input', { type: 'file', accept: 'image/*', class: 'file-hidden', 'aria-label': 'Take or choose a meal photo' });
+  inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.value = ''; if (f) readFoodPhoto(f, date); });
+  if (!(S.data.foodAi || S.data.scanEnabled)) return h('button.btn.ghost', { onclick: () => toast('Photo logging needs an AI key in Script Properties.', 4000) }, 'Snap a photo');
+  return h('label.btn.ghost.filebtn', null, 'Snap a photo', inp);
 }
 function openMeal(pre) {
   modal(pre.photo ? 'Meal from photo' : 'Add meal', close => {

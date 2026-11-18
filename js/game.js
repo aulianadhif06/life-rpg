@@ -2,7 +2,7 @@
 // state yang bisa "nyasar": edit transaksi lama → HP/XP ikut menyesuaikan.
 import { isFree, catLabel, addDays, daysBetween, cycleOf, cycleEnd, addMonthKey } from './fin.js';
 import { BOSSES } from './sprites.js';
-import { sessionsOn, prsIn, wdOf, isSport, kindOf, targets, weightAvg } from './train.js';
+import { sessionsOn, prsIn, wdOf, isSport, kindOf, targets, weightAvg, energyDay } from './train.js';
 
 export const RULES = {
   hpMax: 100,
@@ -15,6 +15,7 @@ export const RULES = {
   boss: { ratio: 0.6, xp: 250, gold: 120, escapeHp: -10 },
   challenge: { xp: 200, gold: 100, acceptDays: 7, share: 0.2 },
   protein: { xp: 15, gold: 5 },
+  calories: { xp: 15, gold: 5, band: 250 },
   gym: { xp: 25, gold: 10, hp: 5, prXp: 15, prMax: 3, missed: -8, weekXp: 60, weekGold: 30 },
   reviveDays: 3, reviveHp: 40, sick: 30, tired: 60,
 };
@@ -203,6 +204,8 @@ export function compute(data, game, today) {
     if (closed && game.body && mealDays[d]) {
       const tg = targets(game.body, weightAvg(data.journal, d));
       if (tg && mealDays[d].p >= tg.protein) gain(d, 'Protein goal hit (' + Math.round(mealDays[d].p) + ' g)', RULES.protein.xp, RULES.protein.gold, 0, 'protein');
+      const en = mealDays[d].n >= 2 ? energyDay(data.journal, game.body, d, null) : null;
+      if (en && Math.abs(en.net - en.goal) <= RULES.calories.band) gain(d, 'Calorie target hit (' + en.food.toLocaleString('en-US') + ' in / ' + en.out.toLocaleString('en-US') + ' out)', RULES.calories.xp, RULES.calories.gold, 0, 'calories');
     }
     if (!closed) continue;
 
