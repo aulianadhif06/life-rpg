@@ -1,5 +1,6 @@
 import { api, auth, cached } from './api.js';
 import { CONNECT_URL } from './config.js';
+import { SCENES, sceneCanvas } from './scenes.js';
 import { lockOn, lockState, lockSupported, enableLock, unlock, disableLock, wipeLock, relock, RELOCK_MS } from './lock.js';
 import { compute, RULES } from './game.js';
 import { bossCanvas, carCanvas, iconCanvas } from './sprites.js';
@@ -29,6 +30,18 @@ function h(tag, attrs, ...kids) {
 const bar = (pct, cls = '') => h('div.bar.' + (cls || 'x'), null, h('i', { style: 'width:' + Math.max(0, Math.min(100, pct * 100)).toFixed(1) + '%' }));
 const panel = (title, right, ...kids) => h('section.panel', null, title ? h('h2', null, title, right ? h('span.right', null, right) : null) : null, ...kids);
 
+// ---------- theme: Auto follows the iPhone's light/dark setting; the choice is kept on this device ----------
+const THEME_KEY = 'lrpg.theme';
+const themePref = () => { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; } };
+const darkMQ = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+const themeNow = () => { const p = themePref(); return p === 'auto' ? (darkMQ && !darkMQ.matches ? 'light' : 'dark') : p; };
+function applyTheme() {
+  const t = themeNow();
+  document.documentElement.dataset.theme = t;
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = '#1a1c2c';
+}
+applyTheme();
+if (darkMQ) (darkMQ.addEventListener ? darkMQ.addEventListener('change', () => { applyTheme(); render(); }) : darkMQ.addListener(() => { applyTheme(); render(); }));
 function toast(msg, ms = 2600) {
   document.querySelectorAll('.toast').forEach(t => t.remove());
   const t = h('div.toast', { role: 'status' }, msg);
@@ -267,7 +280,7 @@ function speech() {
 }
 function viewHome() {
   const g = S.g, cfg = gameCfg(), t = g.today;
-  const scene = h('section.panel.scene', null, h('div.stage', null, h('div.stars'), avatarCanvas(avatarOf(cfg), g.status, 2), h('button.btn.sm.ghost.edit', { onclick: openWardrobe }, 'Customize')),
+  const scene = h('section.panel.scene', null, h('div.stage', null, sceneCanvas(avatarOf(cfg).bg, themeNow()), avatarCanvas(avatarOf(cfg), g.status, 2), h('button.btn.sm.ghost.edit', { onclick: openWardrobe }, 'Customize')),
     h('div.hero-name', null, cfg.name || 'Hero', h('span.status-chip.' + g.status, null, STATUS_TXT[g.status])),
     h('div.small.muted', null, 'Lv ' + g.level + ' · ' + g.title + ' · ' + g.streak + '-day streak'),
     h('div.bubble', null, speech()));
@@ -601,7 +614,7 @@ function openSettings() {
         const s = Math.max(0, Math.min(50, Number(share.value) || 0)) / 100;
         if (await saveGame({ name: name.value.trim() || 'Hero', share: s })) close();
       } }, 'Save')),
-      lockBox(), garminBox(close),
+      themeBox(), lockBox(), garminBox(close),
       h('p.small.muted', { style: 'margin-top:18px' }, h('a', { href: 'https://github.com/aulianadhif06/life-rpg/blob/main/CREDITS.md', target: '_blank', rel: 'noopener', style: 'color:inherit' }, 'Art credits')),
       h('p.small.muted', null, 'Adventure started ' + shortDate(S.g.start) + ' ' + S.g.start.slice(0, 4) + '. Your data lives in your Google Sheet; this device only keeps a copy.'),
       h('div.btns', null,
@@ -643,6 +656,15 @@ async function syncGarmin(manual, days = 7) {
   } catch (e) {
     if (manual) toast('⚠ Garmin: ' + (/tidak dikenal/.test(e.message) ? 'needs the latest Google script update.' : e.message), 6000);
   } finally { garminBusy = false; }
+}
+function themeBox() {
+  const box = h('div.wsec', { style: 'margin-top:18px' });
+  const paint = () => box.replaceChildren(h('div.wlab', null, 'Appearance'),
+    h('div.chips', null, [['auto', 'Auto (iPhone)'], ['light', 'Light'], ['dark', 'Dark']].map(([k, l]) => h('button' + (themePref() === k ? '.on' : ''), { type: 'button', onclick: () => {
+      try { localStorage.setItem(THEME_KEY, k); } catch (e) { /* ignore */ } applyTheme(); render(); paint(); } }, l))),
+    h('p.small.muted', null, 'Auto switches with your iPhone\'s light and dark mode. Saved on this device.'));
+  paint();
+  return box;
 }
 function lockBox() {
   const box = h('div.wsec', { style: 'margin-top:18px' });
@@ -702,8 +724,8 @@ function openWardrobe() {
     let tab = 'look';
     const tabs = h('div.tabs');
     const paint = () => {
-      prev.replaceChildren(avatarCanvas(draft, 'ok', 2.5));
-      tabs.replaceChildren(...[['look', 'Look'], ['clothes', 'Clothes']].map(([k, l]) => h('button' + (tab === k ? '.on' : ''), { type: 'button', onclick: () => { tab = k; paint(); } }, l)));
+      prev.replaceChildren(sceneCanvas(draft.bg, themeNow()), avatarCanvas(draft, 'ok', 2.5));
+      tabs.replaceChildren(...[['look', 'Look'], ['clothes', 'Clothes'], ['bg', 'Background']].map(([k, l]) => h('button' + (tab === k ? '.on' : ''), { type: 'button', onclick: () => { tab = k; paint(); } }, l)));
       body.replaceChildren(...sections());
       const c = cost();
       saveBtn.textContent = c ? 'Buy & save · ' + c + 'G' : 'Save look';
@@ -721,7 +743,11 @@ function openWardrobe() {
     const swatches = (field, kind, keys) => h('div.swatches', null, keys.map(k => h('button' + (draft[field] === k ? '.on' : ''), {
       type: 'button', style: 'background:' + swatch(kind, k), title: ITEM_NAMES[k] || pretty(k), 'aria-label': ITEM_NAMES[k] || pretty(k), onclick: () => { draft[field] = k; paint(); } })));
     const sec = (title, ...kids) => h('div.wsec', null, h('div.wlab', null, title), ...kids);
-    const sections = () => tab === 'look' ? [
+    const bgPick = () => h('div.bgpick', null, SCENES.map(([k, l]) => h('button' + ((draft.bg || 'auto') === k ? '.on' : ''), { type: 'button', onclick: () => { draft.bg = k; paint(); } },
+      sceneCanvas(k, themeNow()), h('div', { style: 'margin-top:4px' }, l))));
+    const sections = () => tab === 'bg' ? [
+      sec('Backdrop', bgPick()), h('p.small.muted', null, 'Auto shows the day park in light mode and the night sky in dark mode.'),
+    ] : tab === 'look' ? [
       sec('Skin tone', swatches('skin', 'skin', SKIN_TONES)),
       sec('Hairstyle', chips('hair', HAIRS, 'hair')),
       sec('Hair colour', swatches('hairColor', 'hair', HAIR_COLORS)),
