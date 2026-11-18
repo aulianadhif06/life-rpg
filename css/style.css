@@ -225,3 +225,7 @@ button.item.plain { width: 100%; background: none; border: 0; text-align: left; 
 .srow .chips button { padding: 5px 8px; font-size: 13px; }
 
 .steps { padding-left: 18px; margin: 6px 0; } .steps li { margin: 4px 0; }
+
+/* snappier taps on phones */
+button, .btn, a, input, select { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.btn:active, .nav button:active, .chips button:active, .tickbtn:active, button.item.plain:active { transform: translateY(2px); filter: brightness(.92); }

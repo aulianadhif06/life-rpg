@@ -74,8 +74,13 @@ function checkLevelUp() {
   else if (last && last.hp > 0 && g.hp === 0) toast('Your hero is knocked out. Log and stay within budget for ' + RULES.reviveDays + ' days to revive.', 5000);
 }
 
-async function act(fn, okMsg) {
-  if (S.busy) return;
+let actQueue = Promise.resolve();
+function act(fn, okMsg) {
+  const run = actQueue.then(() => actNow(fn, okMsg));
+  actQueue = run.catch(() => {});
+  return run;
+}
+async function actNow(fn, okMsg) {
   S.busy = true; document.body.classList.add('busy');
   try {
     const d = await fn();
@@ -89,6 +94,28 @@ async function act(fn, okMsg) {
   } finally { S.busy = false; document.body.classList.remove('busy'); }
 }
 
+/** Show the change immediately, save in the background; on failure undo it and offer a retry. */
+function optimistic(apply, fn, okMsg, retry) {
+  const undo = apply();
+  S.pending = (S.pending || 0) + 1;
+  recompute(true); render(); if (okMsg) toast(okMsg);
+  act(fn).then(ok => {
+    S.pending--;
+    if (!ok) { undo(); recompute(false); render(); if (retry) toast('⚠ Not saved. Tap Add to try again.', 5000); }
+  });
+}
+const tmpId = () => 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+function addTxnsFast(list, okMsg) {
+  const rows = list.map((x, i) => ({ id: tmpId(), toAccount: '', note: '', ...x, createdAt: Date.now() + i }));
+  optimistic(() => { S.data.txns.push(...rows); return () => { S.data.txns = S.data.txns.filter(t => !rows.includes(t)); }; },
+    () => api('addTxns', list), okMsg, true);
+}
+function logAddFast(list, okMsg) {
+  const rows = list.map((x, i) => ({ id: tmpId(), ...x, createdAt: Date.now() + i }));
+  S.data.journal = S.data.journal || [];
+  optimistic(() => { S.data.journal.push(...rows); return () => { S.data.journal = S.data.journal.filter(t => !rows.includes(t)); }; },
+    () => api('logAdd', list), okMsg, true);
+}
 async function saveGame(patch) {
   const cfg = { ...gameCfg(), ...patch };
   return act(() => api('saveSettings', { game: JSON.stringify(cfg) }));
@@ -138,12 +165,22 @@ function relockNow() {
   S.data = null; S.g = null;
   renderLock(null);
 }
+let refreshing = null;
 async function refresh(quiet) {
-  const ok = await act(async () => {
-    const d = await api('getData');
-    if (!quiet || !S.data) { S.data = d; recompute(false); render(); } else { S.data = d; recompute(true); render(); }
-    return null;
-  });
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    try {
+      const d = await api('getData');
+      if (S.pending) return false;                 // a save is in flight; its own result will update the screen
+      const first = !S.data; S.data = d; recompute(quiet && !first); render();
+      return true;
+    } catch (e) {
+      if (e.auth) { auth.clear(); renderPair('Your session has ended. Please sign in again.'); }
+      else if (!quiet) toast('⚠ ' + e.message, 4500);
+      return false;
+    } finally { refreshing = null; }
+  })();
+  const ok = await refreshing;
   if (!ok) return;
   if (!gameCfg().start) await saveGame({ start: today(), name: gameCfg().name || 'Hero' });
   checkLevelUp();
@@ -177,11 +214,16 @@ function renderPair(msg) {
 }
 
 // ---------- render utama ----------
+function appRoot() {
+  let r = document.getElementById('app');
+  if (!r || r.parentNode !== document.body) { document.body.querySelectorAll(':scope > .pair').forEach(x => x.remove()); r = h('div', { id: 'app' }); document.body.prepend(r); }
+  return r;
+}
 function render() {
   if (S.locked || !S.data || !S.g) return;
   const y = window.scrollY;
   const views = { home: viewHome, jurnal: viewJurnal, train: viewHealth, arena: viewArena, harta: viewHarta };
-  document.body.replaceChildren(hud(), h('main', null, views[S.view]()), nav());
+  appRoot().replaceChildren(hud(), h('main', null, views[S.view]()), nav());
   window.scrollTo(0, y);
 }
 function go(v) { if (v === 'add') return openAdd(); S.view = v; window.scrollTo(0, 0); render(); }
@@ -330,10 +372,8 @@ function openAdd(pre = {}) {
       if (type === 'tf' && to.value === from.value) { err.textContent = 'Choose a different destination account.'; return; }
       if (!date.value || date.value > today()) { err.textContent = 'That date isn\'t valid.'; return; }
       try { localStorage.setItem('lrpg.acct', from.value); } catch (e) { /* ignore */ }
-      save.disabled = true; err.textContent = '';
-      const ok = await act(() => api('addTxns', [{ type, amount: n, account: from.value, toAccount: type === 'tf' ? to.value : '', category: type === 'tf' ? '' : cat, date: date.value, note: note.value.trim(), src: 'rpg' }]), 'Saved ' + rp(n));
-      save.disabled = false;
-      if (ok) close();
+      close();
+      addTxnsFast([{ type, amount: n, account: from.value, toAccount: type === 'tf' ? to.value : '', category: type === 'tf' ? '' : cat, date: date.value, note: note.value.trim(), src: 'rpg' }], 'Saved ' + rp(n));
     } }, 'SAVE');
     setTimeout(() => amt.focus(), 50);
     return h('div', null, tabs, h('label.f', null, 'Amount (you can type 25k or 1.5m)'), amt, hint, catWrap, fromLabel, from, toWrap,
@@ -859,7 +899,7 @@ function openActivity(pre) {
       if (!date.value || date.value > today()) { err.textContent = 'That date isn\'t valid.'; return; }
       const k = SPORTS[sport].dist ? Math.round((Number(String(km.value).replace(',', '.')) || 0) * 100) / 100 : 0;
       const data = { type: 'sport', sport, name: pre.name && pre.sport === sport ? pre.name : SPORTS[sport].name, min: m, km: k || undefined, effort, kcal: sportKcal(sport, m, bodyWeight(), effort), note: note.value.trim() || undefined, src: 'manual' };
-      if (await act(() => api('logAdd', [{ date: date.value, kind: 'workout', data }]), 'Saved: ' + data.name + ' ' + m + ' min')) close();
+      close(); logAddFast([{ date: date.value, kind: 'workout', data }], 'Saved: ' + data.name + ' ' + m + ' min');
     } }, 'Save activity')));
   });
 }
@@ -978,7 +1018,7 @@ function openMeal(pre) {
         if (!n) { err.textContent = 'Name the food.'; return; }
         if (!(k > 0 || pr > 0)) { err.textContent = 'Add calories or protein.'; return; }
         const data = { name: n + (x !== 1 ? ' ×' + x : ''), kcal: Math.round(k * x), p: Math.round(pr * x * 10) / 10, slot, src: ph ? 'photo' : 'manual' };
-        if (await act(() => api('logAdd', [{ date: pre.date || today(), kind: 'meal', data }]), 'Added ' + data.name)) close();
+        close(); logAddFast([{ date: pre.date || today(), kind: 'meal', data }], 'Added ' + data.name);
       } }, 'Add meal')));
   });
 }
@@ -1033,7 +1073,7 @@ function openWeigh() {
       h('div.btns', null, h('button.btn.gold.block', { onclick: async () => {
         const k = Number(String(kg.value).replace(',', '.')), w = Number(String(waist.value).replace(',', '.')) || 0;
         if (!(k > 25 && k < 300)) { err.textContent = 'Enter your weight in kg.'; return; }
-        if (await act(() => api('logAdd', [{ date: date.value || today(), kind: 'weight', data: { kg: Math.round(k * 10) / 10, waist: w ? Math.round(w * 10) / 10 : undefined } }]), 'Weight saved')) close();
+        close(); logAddFast([{ date: date.value || today(), kind: 'weight', data: { kg: Math.round(k * 10) / 10, waist: w ? Math.round(w * 10) / 10 : undefined } }], 'Weight saved');
       } }, 'Save')));
   });
 }
@@ -1330,6 +1370,18 @@ function openWorkoutDetail(w) {
 }
 
 // ---------- service worker ----------
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // check for a new version whenever the app comes back to the front
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+  // A new version took over: reload once, but never in the middle of something (open sheet, workout, typing).
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    const reloadWhenIdle = () => { if (document.querySelector('.ov') || S.busy || S.pending) return setTimeout(reloadWhenIdle, 3000); location.reload(); };
+    reloadWhenIdle();
+  });
+}
 window.__lrpg = { S, render, recompute };
 boot();
