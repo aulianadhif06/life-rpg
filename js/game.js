@@ -30,6 +30,8 @@ export const RULES = {
   reviveDays: 3, reviveHp: 40, sick: 30, tired: 60,
 };
 
+/** Categories the 'lighter week' challenge may pick: specific, cuttable spending only. */
+const CAT_WEEK = ['Makan & minum', 'Transport', 'Belanja harian', 'Belanja online', 'Hiburan & nongkrong'];
 const rpK = n => 'Rp' + Math.round(n / 1000) + 'K';
 /** Rolling challenges. name/desc are shown in the app; test/val read one day's record. */
 export const CH_DEFS = {
@@ -360,7 +362,7 @@ export function compute(data, game, today) {
       if (D.needs === 'body' && !game.body) return false;
       if (D.needs === 'garmin' && !hasGarmin) return false;
       if (D.weekdaysOnly && wdOf(today) >= 5) return false;
-      if (t === 'catweek' && !(cur.budget && Object.keys(cur.budget.lines).some(c => isFree(c) && cur.budget.lines[c] > 0))) return false;
+      if (t === 'catweek' && !(cur.budget && Object.keys(cur.budget.lines).some(c => CAT_WEEK.includes(c) && cur.budget.lines[c] > 0))) return false;
       return true;
     }).sort();
     const taken = new Set(challenges.filter(ch => ch.data.type !== 'cut' && ch.data.start >= wk0).map(ch => ch.data.type));
@@ -369,7 +371,7 @@ export function compute(data, game, today) {
     const mk = t => {
       const o = { type: t, until: addDays(wk0, 6) };
       if (t === 'catweek') {
-        const cats = Object.entries(cur.budget.lines).filter(([c, v]) => isFree(c) && v > 0).map(([c]) => c).sort();
+        const cats = Object.entries(cur.budget.lines).filter(([c, v]) => CAT_WEEK.includes(c) && v > 0).map(([c]) => c).sort();
         o.cat = pickRandom(cats, 1, 'catweek' + wk0)[0]; o.cap = Math.max(20000, Math.floor(cur.budget.lines[o.cat] / 4.3 * 0.8 / 5000) * 5000);
       }
       return o;
