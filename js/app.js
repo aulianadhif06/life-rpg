@@ -8,8 +8,8 @@ import { kindOf, energyDay, EX, WEEKDAYS, SPLIT_TXT, SPORTS, EFFORT, FOODS, ACTI
 import { GOAL_TYPES, goalImage } from './sprites.js';
 import { avatarCanvas, avatarOf, DEFAULT_AVATAR, HAIRS, TOPS, BOTTOMS, SKIN_TONES, HAIR_COLORS, swatch } from './hero.js';
 import {
-  EXP_CATS, INC_CATS, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
-  cycleName, MONTHS, DAYS, balances, worth, netWorth, goalProgress, catLabel,
+  EXP_CATS, INC_CATS, expCats, incCats, setCats, getCats, isFixed, KIND_LABEL, isFree, rp, rpShort, parseAmount, todayLocal, addDays, daysBetween, dow, shortDate,
+  cycleName, MONTHS, DAYS, balances, worth, netWorth, goalProgress, catLabel, isLiving, CAT_EN,
 } from './fin.js';
 
 // ---------- util DOM ----------
@@ -69,6 +69,7 @@ const acct = id => accounts().find(a => a.id === id);
 
 function recompute(announce) {
   const before = S.g;
+  setCats(gameCfg().cats);
   S.g = compute(S.data, gameCfg(), today());
   if (!announce || !before) return;
   const g = S.g;
@@ -239,6 +240,7 @@ function render() {
   const views = { home: viewHome, jurnal: viewJurnal, train: viewHealth, arena: viewArena, harta: viewHarta };
   appRoot().replaceChildren(hud(), h('main', null, views[S.view]()), ...nav());
   window.scrollTo(0, y);
+  if (S.acctPaint) S.acctPaint();
 }
 function go(v) { if (v === 'add') return openAdd(); S.view = v; window.scrollTo(0, 0); render(); }
 
@@ -353,10 +355,11 @@ function acctOptions(sel, filter) {
   return accounts().filter(filter || (() => true)).map(a => h('option', { value: a.id, selected: a.id === sel }, a.name + (a.kind === 'kredit' ? ' (card)' : '')));
 }
 function openAdd(pre = {}) {
+  const preAcct = pre.account;
   let type = pre.type || 'out', cat = pre.category || '';
   const harian = accounts().filter(a => a.kind === 'harian');
   const last = (() => { try { return localStorage.getItem('lrpg.acct'); } catch (e) { return null; } })();
-  const defAcct = (last && acct(last)) ? last : (harian[0] || accounts()[0]).id;
+  const defAcct = preAcct && acct(preAcct) ? preAcct : (last && acct(last)) ? last : (harian[0] || accounts()[0]).id;
   modal('Add transaction', close => {
     const amt = h('input.in.big', { inputmode: 'decimal', placeholder: '0', autocomplete: 'off', value: pre.amount || '', 'aria-label': 'Amount' });
     const hint = h('div.small.muted', { style: 'text-align:right;min-height:18px' });
@@ -372,7 +375,7 @@ function openAdd(pre = {}) {
     const fromLabel = h('label.f', null, 'Paid from');
     const paint = () => {
       tabs.replaceChildren(...[['out', 'Expense'], ['in', 'Income'], ['tf', 'Transfer']].map(([k, l]) => h('button' + (type === k ? '.on' : ''), { type: 'button', onclick: () => { type = k; cat = ''; paint(); } }, l)));
-      const cats = type === 'in' ? INC_CATS : EXP_CATS;
+      const cats = type === 'in' ? incCats() : expCats();
       catBox.replaceChildren(...cats.map(c => h('button' + (cat === c ? '.on' : ''), { type: 'button', onclick: () => { cat = c; paint(); } }, catLabel(c))));
       catWrap.hidden = type === 'tf'; toWrap.hidden = type !== 'tf';
       fromLabel.textContent = type === 'in' ? 'Received in' : type === 'tf' ? 'From account' : 'Paid from';
@@ -597,7 +600,7 @@ function openBudget() {
   if (!p && B.suggestion && B.suggestion.ready) B.suggestion.lines.forEach(l => base[l.cat] = l.suggested);
   modal('Budget · ' + cycleName(cur), close => {
     const cap = h('input.in', { inputmode: 'decimal', value: B.cap ? String(B.cap) : '' });
-    const rows = EXP_CATS.filter(c => !/^Mobil/.test(c)).map(c => [c, h('input.in', { inputmode: 'decimal', placeholder: '—', value: base[c] ? String(base[c]) : '', 'aria-label': catLabel(c) })]);
+    const rows = expCats().filter(c => isLiving(c)).map(c => [c, h('input.in', { inputmode: 'decimal', placeholder: '—', value: base[c] ? String(base[c]) : '', 'aria-label': catLabel(c) })]);
     const total = h('div.kv');
     const upd = () => { const s = rows.reduce((a, [, i]) => a + (parseAmount(i.value) || 0), 0); const c = parseAmount(cap.value) || 0; total.replaceChildren(h('span', null, 'Total'), h('b.num' + (c && s > c ? '.red' : ''), null, rp(s) + (c ? ' / target ' + rp(c) : ''))); };
     [cap, ...rows.map(r => r[1])].forEach(i => i.addEventListener('input', upd)); upd();
@@ -629,14 +632,135 @@ function viewHarta() {
     return h('div', null, h('div.tiny.muted', { style: 'margin-top:8px' }, KIND_LABEL[k].toUpperCase()),
       h('div.list', null, list.map(a => {
         const w = worth(a, bal, d.txns);
-        return h('div.item', null, h('div.grow', null, h('div.t1', null, a.name),
+        return h('button.item.acct', { onclick: () => openAccount(a.id) }, h('div.grow', null, h('div.t1', null, a.name),
           a.kind === 'kredit' && a.limit ? h('div.t2', null, Math.round(Math.max(0, -w) / a.limit * 100) + '% of ' + rpShort(a.limit) + ' limit used') : null,
           a.kind === 'investasi' && a.valueDate ? h('div.t2', null, 'Value as of ' + shortDate(a.valueDate)) : null),
         h('div.amt.num' + (w < 0 ? '.red' : ''), null, rp(w)));
       })));
-  })));
+  }), h('p.tiny.muted', { style: 'margin-top:8px' }, 'Tap an account to see what went in and out.'),
+    h('div.btns', null, h('button.btn.sm', { onclick: () => openAccountEditor() }, '+ Add account'))));
   return h('div', null, out);
 }
+// ---------- ACCOUNT DETAIL: what went in and out of one account ----------
+const monthName = mk => { const [y, m] = mk.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); };
+const shiftMonth = (mk, k) => { const [y, m] = mk.split('-').map(Number); const d = new Date(y, m - 1 + k, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+function openAccount(id) {
+  let mk = today().slice(0, 7);
+  modal(acct(id) ? acct(id).name : 'Account', close => {
+    const box = h('div');
+    const paint = () => {
+      const a = acct(id); if (!a) { close(); return; }
+      const d = S.data, bal = balances(d.accounts, d.txns), w = worth(a, bal, d.txns);
+      const list = d.txns.filter(t => (t.account === id || t.toAccount === id) && t.date.startsWith(mk)).sort((x, y) => y.date.localeCompare(x.date) || (y.createdAt || 0) - (x.createdAt || 0));
+      const spent = list.filter(t => t.type === 'out' && t.account === id).reduce((s, t) => s + t.amount, 0);
+      const recv = list.filter(t => t.type === 'in' && t.account === id).reduce((s, t) => s + t.amount, 0);
+      const tin = list.filter(t => t.type === 'tf' && t.toAccount === id).reduce((s, t) => s + t.amount, 0);
+      const tout = list.filter(t => t.type === 'tf' && t.account === id).reduce((s, t) => s + t.amount, 0);
+      const byCat = {};
+      list.forEach(t => { if (t.type === 'out' && t.account === id) byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
+      const cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]), top = cats.length ? cats[0][1] : 1;
+      const card = a.kind === 'kredit';
+      const days = {};
+      list.forEach(t => (days[t.date] = days[t.date] || []).push(t));
+      box.replaceChildren(...[
+        h('div.kv', null, h('span.muted', null, card ? 'Owed on this card' : 'Balance now'), h('span.num.big-num' + (w < 0 ? '.red' : ''), { style: 'font-size:22px' }, rp(card ? Math.max(0, -w) : w))),
+        card && a.limit ? h('div.small.muted', null, Math.round(Math.max(0, -w) / a.limit * 100) + '% of ' + rpShort(a.limit) + ' limit used' + (a.dueDay ? ' · pay by day ' + a.dueDay : '')) : null,
+        h('div.monthnav', null, h('button.btn.sm.ghost', { onclick: () => { mk = shiftMonth(mk, -1); paint(); }, 'aria-label': 'Previous month' }, '‹'),
+          h('b', null, monthName(mk)),
+          h('button.btn.sm.ghost', { disabled: mk >= today().slice(0, 7), onclick: () => { mk = shiftMonth(mk, 1); paint(); }, 'aria-label': 'Next month' }, '›')),
+        h('div.grid2', null,
+          h('div.stat', null, h('div.tiny.muted', null, card ? 'Charged' : 'Spent'), h('div.num.red', null, rp(spent))),
+          h('div.stat', null, h('div.tiny.muted', null, card ? 'Refunds' : 'Received'), h('div.num.green', null, rp(recv))),
+          h('div.stat', null, h('div.tiny.muted', null, card ? 'Paid off' : 'Moved in'), h('div.num', null, rp(tin))),
+          h('div.stat', null, h('div.tiny.muted', null, 'Moved out'), h('div.num', null, rp(tout)))),
+        cats.length ? h('div', null, h('div.glab', null, 'Spending by category'), cats.map(([c, v]) => h('div.catbar', null,
+          h('div.kv', null, h('span', null, catLabel(c)), h('span.num', null, rp(v))),
+          h('div.bar', null, h('i', { style: 'width:' + Math.max(3, v / top * 100) + '%' }))))) : null,
+        h('div.glab', null, 'Transactions (' + list.length + ')'),
+        list.length ? h('div', null, Object.keys(days).map(dd => h('div', null, h('div.tiny.muted', { style: 'margin-top:8px' }, dayLabel(dd)), h('div.list', null, days[dd].map(t => txItem(t)))))) : h('div.empty', null, 'Nothing in ' + monthName(mk) + '.'),
+        h('div.btns', null, h('button.btn.sm.gold', { onclick: () => { close(); openAdd({ account: id }); } }, '+ Add with this account'),
+          h('button.btn.sm.ghost', { onclick: () => { close(); openAccountEditor(a); } }, 'Edit account'))].filter(Boolean));
+    };
+    S.acctPaint = paint;
+    paint();
+    return box;
+  }, () => { S.acctPaint = null; });
+}
+// ---------- ACCOUNT EDITOR: add, rename, change type, delete (only when unused) ----------
+function openAccountEditor(a0) {
+  const a = a0 ? { ...a0 } : { kind: 'harian' };
+  modal(a0 ? 'Edit account' : 'New account', close => {
+    const name = h('input.in', { value: a.name || '', maxlength: 40, placeholder: 'e.g. BCA, GoPay, CC BRI' });
+    const kinds = h('div.chips');
+    const opening = h('input.in', { inputmode: 'decimal', value: a.opening ? String(a.opening) : '', placeholder: '0' });
+    const limit = h('input.in', { inputmode: 'decimal', value: a.limit ? String(a.limit) : '', placeholder: 'e.g. 10jt' });
+    const cut = h('input.in', { inputmode: 'numeric', value: a.cutDay ? String(a.cutDay) : '', placeholder: '1-31' });
+    const due = h('input.in', { inputmode: 'numeric', value: a.dueDay ? String(a.dueDay) : '', placeholder: '1-31' });
+    const cardBox = h('div', null, h('label.f', null, 'Credit limit'), limit, h('div.grid2', null, h('div', null, h('label.f', null, 'Statement day'), cut), h('div', null, h('label.f', null, 'Due day'), due)));
+    const err = h('div.err');
+    const paintK = () => { kinds.replaceChildren(...['harian', 'tabungan', 'investasi', 'kredit'].map(k => h('button' + (a.kind === k ? '.on' : ''), { type: 'button', onclick: () => { a.kind = k; paintK(); } }, KIND_LABEL[k].replace(/s$/, '')))); cardBox.hidden = a.kind !== 'kredit'; };
+    paintK();
+    const used = a0 && S.data.txns.some(t => t.account === a0.id || t.toAccount === a0.id);
+    return h('div', null,
+      h('label.f', null, 'Name'), name, h('label.f', null, 'Type'), kinds,
+      h('label.f', null, a.kind === 'kredit' ? 'Starting balance (use minus for debt, e.g. -500k)' : 'Starting balance (before your first logged transaction)'), opening,
+      cardBox, err,
+      h('div.btns', null, h('button.btn.gold', { onclick: async () => {
+        if (!name.value.trim()) { err.textContent = 'Give the account a name.'; return; }
+        const n = s => { const v = parseAmount(String(s || '').replace(/^-/, '')); return isFinite(v) ? (String(s).trim().startsWith('-') ? -v : v) : 0; };
+        const body = { ...a, name: name.value.trim(), opening: n(opening.value), limit: a.kind === 'kredit' ? n(limit.value) : 0,
+          cutDay: a.kind === 'kredit' ? Number(cut.value) || 0 : 0, dueDay: a.kind === 'kredit' ? Number(due.value) || 0 : 0 };
+        close();
+        await act(() => api('saveAccount', body), a0 ? 'Account updated' : 'Account added');
+      } }, 'Save'),
+        a0 ? h('button.btn.red.ghost', { onclick: async () => {
+          if (used) { err.textContent = 'This account has transactions, so it can\'t be deleted. Rename it instead, or delete its transactions first.'; return; }
+          if (!confirm('Delete ' + a0.name + '?')) return;
+          close(); await act(() => api('deleteAccount', a0.id), 'Account deleted');
+        } }, 'Delete') : null),
+      a0 ? h('p.tiny.muted', null, used ? 'Renaming keeps all its transactions.' : 'No transactions use this account yet.') : null);
+  });
+}
+// ---------- CATEGORIES: add your own, hide or rename built-ins ----------
+function openCategories() {
+  const C = getCats();
+  let tab = 'out';
+  modal('Categories', close => {
+    const box = h('div');
+    const paint = () => {
+      const builtIn = tab === 'out' ? EXP_CATS : INC_CATS, mine = C[tab];
+      const nm = h('input.in', { placeholder: tab === 'out' ? 'e.g. Coffee, Pets, Gym' : 'e.g. Freelance', maxlength: 30 });
+      let fixed = false;
+      const fx = h('div.chips');
+      const paintFx = () => fx.replaceChildren(h('button' + (!fixed ? '.on' : ''), { type: 'button', onclick: () => { fixed = false; paintFx(); } }, 'Flexible'), h('button' + (fixed ? '.on' : ''), { type: 'button', onclick: () => { fixed = true; paintFx(); } }, 'Fixed bill'));
+      paintFx();
+      const row = (c, custom) => {
+        const hidden = C.hide.includes(c), lab = C.labels[c] || (custom ? c : CAT_EN[c] || c);
+        return h('div.item' + (hidden ? '.dim' : ''), null,
+          h('div.grow', null, h('div.t1', null, lab), h('div.t2', null, custom ? 'Yours' + (tab === 'out' ? (custom.fixed ? ' · fixed bill' : ' · flexible') : '') : tab === 'out' ? (isFixed(c) ? 'Fixed bill' : isLiving(c) ? 'Flexible' : 'Car / reward, not in the daily limit') : 'Built-in')),
+          h('button.btn.sm.ghost', { onclick: () => { const v = prompt('Display name for "' + lab + '"', lab); if (v != null) { if (v.trim() && v.trim() !== (CAT_EN[c] || c)) C.labels[c] = v.trim().slice(0, 30); else delete C.labels[c]; paint(); } } }, 'Rename'),
+          custom ? h('button.btn.sm.red', { onclick: () => { C[tab] = C[tab].filter(x => x !== custom); paint(); } }, 'Remove')
+            : c === 'Lainnya' ? null : h('button.btn.sm' + (hidden ? '' : '.ghost'), { onclick: () => { C.hide = hidden ? C.hide.filter(x => x !== c) : [...C.hide, c]; paint(); } }, hidden ? 'Show' : 'Hide'));
+      };
+      box.replaceChildren(...[
+        h('div.tabs', null, ...[['out', 'Expense'], ['in', 'Income']].map(([k, l]) => h('button' + (tab === k ? '.on' : ''), { type: 'button', onclick: () => { tab = k; paint(); } }, l))),
+        h('div.glab', null, 'Add a category'), nm, tab === 'out' ? h('div', null, h('div.small.muted', { style: 'margin:6px 0' }, 'Flexible spending counts toward your daily safe limit. Fixed bills (rent, subscriptions) don\'t.'), fx) : null,
+        h('div.btns', null, h('button.btn.sm', { onclick: () => {
+          const v = nm.value.trim(); if (!v) return;
+          const all = [...EXP_CATS, ...INC_CATS, ...C.out.map(x => x.name), ...C.in.map(x => x.name)].map(x => x.toLowerCase());
+          if (all.includes(v.toLowerCase()) || Object.values(CAT_EN).some(x => x.toLowerCase() === v.toLowerCase())) { toast('That category already exists'); return; }
+          C[tab].push(tab === 'out' ? { name: v.slice(0, 30), fixed } : { name: v.slice(0, 30) }); paint();
+        } }, '+ Add')),
+        mine.length ? h('div', null, h('div.glab', null, 'Your categories'), h('div.list', null, mine.map(x => row(x.name, x)))) : null,
+        h('div.glab', null, 'Built-in'), h('div.list', null, builtIn.map(c => row(c, null))),
+        h('p.tiny.muted', null, 'Hiding a category only removes it from the picker; old transactions keep it. Renaming changes how it\'s shown, not past data.'),
+        h('div.btns', null, h('button.btn.gold', { onclick: async () => { if (await saveGame({ cats: C })) { close(); toast('Categories saved'); } } }, 'Save categories'))].filter(Boolean));
+    };
+    paint();
+    return box;
+  });
+}
+
 // ---------- REWARD FUND (backed by real money in a pocket) ----------
 const fundMoved = () => (S.data.txns || []).filter(t => t.type === 'tf' && t.src === 'rewardmove').reduce((s, t) => s + t.amount, 0);
 function rewardPanel() {
@@ -768,6 +892,9 @@ function openSettings() {
         const s = Math.max(0, Math.min(50, Number(share.value) || 0)) / 100;
         if (await saveGame({ name: name.value.trim() || 'Hero', share: s })) close();
       } }, 'Save')),
+      h('div.wsec', { style: 'margin-top:18px' }, h('div.wlab', null, 'Money setup'), h('div.btns', null,
+        h('button.btn.sm', { onclick: () => { close(); openCategories(); } }, 'Categories'),
+        h('button.btn.sm', { onclick: () => { close(); S.view = 'harta'; render(); openAccountEditor(); } }, 'Add account'))),
       themeBox(), lockBox(), garminBox(close),
       h('p.small.muted', { style: 'margin-top:18px' }, h('a', { href: 'https://github.com/aulianadhif06/life-rpg/blob/main/CREDITS.md', target: '_blank', rel: 'noopener', style: 'color:inherit' }, 'Art credits')),
       h('p.small.muted', null, 'Adventure started ' + shortDate(S.g.start) + ' ' + S.g.start.slice(0, 4) + '. Your data lives in your Google Sheet; this device only keeps a copy.'),

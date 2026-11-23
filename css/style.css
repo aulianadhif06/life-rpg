@@ -284,3 +284,10 @@ button.goal { display: block; width: 100%; text-align: left; background: none; b
 
 details.more { margin-top: 12px; } details.more summary { cursor: pointer; padding: 10px; background: var(--panel2); font-weight: 700; list-style: none; }
 details.more summary::-webkit-details-marker { display: none; } details.more summary::after { content: ' ▾'; color: var(--g); }
+
+button.item.acct { width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+button.item.acct:active { background: var(--panel2); }
+.monthnav { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 8px; }
+.stat { background: var(--panel2); padding: 8px 10px; } .stat .num { font-weight: 700; margin-top: 2px; }
+.catbar { margin: 6px 0; } .catbar .bar { height: 6px; background: var(--deep); margin-top: 3px; } .catbar .bar i { display: block; height: 100%; background: #ef7d57; }
+.item.dim { opacity: .5; }

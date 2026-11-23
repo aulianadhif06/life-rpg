@@ -12,10 +12,21 @@ export const CAT_EN = {
   'Mobil – pajak & admin': 'Car – tax & admin', 'Mobil – modif': 'Car – mods', 'Lainnya': 'Other', 'Gaji': 'Salary', 'THR & bonus': 'Bonus',
   'Sampingan': 'Side income', 'Cashback & refund': 'Cashback & refund', 'Hasil investasi': 'Investment return', 'Hadiah': 'Reward', 'Pindah dana': 'Transfer',
 };
-export const catLabel = c => CAT_EN[c] || c;
+// Owner's own categories (kept in settings.game.cats): extra ones, hidden built-ins, renamed labels.
+let CUS = { out: [], in: [], hide: [], labels: {} };
+export function setCats(c) {
+  c = c || {};
+  CUS = { out: Array.isArray(c.out) ? c.out.filter(x => x && x.name) : [], in: Array.isArray(c.in) ? c.in.filter(x => x && x.name) : [],
+    hide: Array.isArray(c.hide) ? c.hide : [], labels: c.labels && typeof c.labels === 'object' ? c.labels : {} };
+}
+export const getCats = () => JSON.parse(JSON.stringify(CUS));
+/** Expense categories to offer when adding a transaction (built-ins minus hidden, plus custom). */
+export const expCats = () => [...EXP_CATS.filter(c => !CUS.hide.includes(c) || c === 'Lainnya'), ...CUS.out.map(x => x.name)];
+export const incCats = () => [...INC_CATS.filter(c => !CUS.hide.includes(c) || c === 'Lainnya'), ...CUS.in.map(x => x.name)];
+export const catLabel = c => CUS.labels[c] || CAT_EN[c] || c;
 
 export const isLiving = c => !/^(Mobil|Hadiah)/.test(String(c || ''));
-export const isFixed = c => FIXED_CATS.includes(c);
+export const isFixed = c => FIXED_CATS.includes(c) || CUS.out.some(x => x.name === c && x.fixed);
 /** Pengeluaran "bebas" (bukan biaya tetap, bukan mobil): yang dinilai di game harian. */
 export const isFree = c => isLiving(c) && !isFixed(c);
 
